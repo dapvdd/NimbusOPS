@@ -218,3 +218,48 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# NimbusOps: Node.js / frontend generated files
+node_modules/
+.vite/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# Local configuration and credentials (examples must contain placeholders only)
+.env.*
+!.env.example
+!.env.*.example
+secrets/
+.secrets/
+.ssh/
+.aws/
+.azure/
+.config/gcloud/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+credentials.json
+service-account*.json
+*tfstate*
+*.tfvars
+*.tfvars.json
+.terraform/
+
+# Local databases, including SQLite sidecar files
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
