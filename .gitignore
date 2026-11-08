@@ -263,3 +263,6 @@ service-account*.json
 # Operating-system metadata
 .DS_Store
 Thumbs.db
+
+# Superpowers SDD session scratch
+.superpowers/

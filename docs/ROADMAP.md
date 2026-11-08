@@ -43,6 +43,36 @@ control-server placement, authentication, metric definitions, and connectivity.
 
 Scope: completes v0.1 / M1, FR-03–07 and AC-01 through AC-09.
 
+**Status: implemented on `feat/docker-deployment-mvp` with automated tests;
+real-Docker live verification BLOCKED on the development machine (no Docker
+Desktop/WSL; nothing installed without authorization). See
+docs/PHASE2_VERIFICATION.md.**
+
+Implementation record (vs the acceptance criteria below, which require the
+Ubuntu VM):
+
+- Approved Nginx template (`nginx-demo`, image `nginx:1.27-alpine`, host
+  port 8080) seeded in the backend catalog; `GET /api/v1/templates` lists it.
+- Dashboard Applications view: host selection, template selection, Deploy
+  with live operation progress, Start/Stop/Refresh lifecycle controls,
+  explicit states for pending/running/failed/unknown/stopped and unreported
+  container state.
+- Durable operations with ids, timestamps, evidence, sanitized errors;
+  states QUEUED/RUNNING/SUCCEEDED/FAILED/UNKNOWN; SUCCEEDED only on agent
+  evidence (`docker ps` + HTTP probe result recorded by the agent).
+- Duplicate protection: same-host-same-template deploy returns the in-flight
+  operation (idempotent); unique (host, template) deployments.
+- Agent executes only allowlisted op types/templates on `nimbusops-*`
+  labeled resources via constrained CLI argv; monitoring is unaffected by
+  Docker unavailability.
+- Automated evidence: 93 Python tests + 27 frontend tests passing,
+  including Phase 2 backend (18), agent Docker/worker (25), and
+  backend↔agent integration (5, Docker mocked).
+- Remaining for full AC pass: run on the Ubuntu VM with a real Docker
+  Engine (inventory vs `docker inspect` comparison, HTTP 200 evidence,
+  stop/unavailability evidence, deliberate-failure evidence, unrelated
+  container before/after evidence).
+
 Acceptance criteria:
 
 - Compare managed inventory with Docker inspection on the Ubuntu VM.

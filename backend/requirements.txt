@@ -1,0 +1,12 @@
+# NimbusOps control server — Python dependencies (pinned).
+# Install into a virtualenv: python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+fastapi==0.115.14
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.43
+pydantic==2.11.9
+pydantic-settings==2.10.1
+python-multipart==0.0.20
+
+# Test dependencies
+pytest==8.4.2
+httpx==0.28.1

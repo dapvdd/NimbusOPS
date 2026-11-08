@@ -1,0 +1,9 @@
+# NimbusOps host agent — Python dependencies (pinned).
+# The agent runs on the managed Linux host (Ubuntu). psutil works cross-
+# platform, which allows local smoke tests on other OSes; Ubuntu is the
+# supported production target.
+psutil==7.0.0
+httpx==0.28.1
+
+# Test dependencies
+pytest==8.4.2
