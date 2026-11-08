@@ -1,0 +1,39 @@
+# NimbusOps host agent systemd unit — EXAMPLE
+#
+# Template only: review, adjust paths/user, and install manually if you
+# control the machine. Nothing in this repository enables it automatically.
+#
+# Install (manual, on a host you own):
+#   sudo cp nimbusops-agent.service.example /etc/systemd/system/nimbusops-agent.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nimbusops-agent
+
+[Unit]
+Description=NimbusOps host agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust to the user that should own the agent identity file.
+User=youruser
+WorkingDirectory=/opt/nimbusops/agent
+Environment=NIMBUSOPS_AGENT_SERVER_URL=http://your-server:8000
+# First enrollment needs the token; after that the identity file suffices.
+Environment=NIMBUSOPS_AGENT_ENROLLMENT_TOKEN=
+# NOTE: prefer a drop-in or EnvironmentFile with restricted permissions
+# (e.g. /etc/nimbusops/agent.env, root:nimbusops 0640) over putting secrets
+# directly in this unit.
+EnvironmentFile=-/etc/nimbusops/agent.env
+ExecStart=/opt/nimbusops/agent/.venv/bin/python -m nimbusops_agent.main
+Restart=on-failure
+RestartSec=10
+# Hardening: the agent only makes outbound HTTP calls and reads /proc.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/youruser/.nimbusops
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

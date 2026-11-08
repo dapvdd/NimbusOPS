@@ -4,10 +4,12 @@ A centralized, cloud-ready platform for monitoring Linux hosts and managing Dock
 
 ## Project status
 
-**Phase 0 — Repository Foundation.** This repository contains documentation and
-reserved component directories only. Monitoring, APIs, authentication, deployment,
-and the dashboard are planned; none is implemented or verified as operational.
-There are no installation or run commands yet.
+**Phase 1 — Single-host monitoring: implemented and locally verified.**
+The control server (FastAPI), dashboard (React/Vite/Tailwind), and host
+agent (Python/psutil) are implemented and tested; see
+[Phase 1 verification](docs/PHASE1_VERIFICATION.md) for what was executed
+and what remains blocked (Ubuntu VM gate). Phase 2 (Docker inventory and
+approved Nginx lifecycle) is not started.
 
 NimbusOps is an academic Cloud Computing project at Sekolah Vokasi,
 Universitas Gadjah Mada. Development is **product-first, local-first, hybrid-ready**.
@@ -54,7 +56,23 @@ Dashboard -> Control Server -> Host Agent -> Docker Engine
 The first line represents logical responsibility, not an inbound agent connection.
 The agent initiates authenticated communication with the control server and uses
 the Docker socket locally. The browser never accesses the agent or Docker directly.
-See [Architecture](docs/ARCHITECTURE.md) for boundaries and pending decisions.
+See [Architecture](docs/ARCHITECTURE.md) for boundaries and pending decisions,
+[API](docs/API.md) for the implemented endpoint contract,
+[Data contract](docs/DATA_CONTRACT.md) for units/thresholds, and
+[Security](docs/SECURITY.md) for the Phase 1 trust model.
+
+## Quick start (Phase 1)
+
+Full setup: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Short version:
+
+```bash
+python -m venv .venv
+.venv/Scripts/python -m pip install -r backend/requirements.txt   # Windows
+cp backend/.env.example backend/.env   # set NIMBUSOPS_ENROLLMENT_TOKEN
+# terminal 1:  cd backend && ..\.venv\Scripts\python -m uvicorn app.main:app --port 8000
+# terminal 2:  cd frontend && npm install && npm run dev   -> http://localhost:5173
+# terminal 3:  agent (see docs/DEVELOPMENT.md §3) enrolls and starts reporting
+```
 
 ## Development milestones
 
@@ -77,15 +95,16 @@ foundation does not imply approval of the PRD or completion of a product milesto
 | [docs/PRD.md](docs/PRD.md) | Traceable digest of the supplied v1.1 source |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Planned components, boundaries, and decisions |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phase acceptance gates |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local setup for server, dashboard, agent, tests |
+| [docs/API.md](docs/API.md) | Implemented Phase 1 API contract |
+| [docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md) | Units, timestamps, thresholds, retention |
+| [docs/SECURITY.md](docs/SECURITY.md) | Enrollment/auth model and known limits |
+| [docs/PHASE1_VERIFICATION.md](docs/PHASE1_VERIFICATION.md) | Executed tests and live evidence |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Group contribution and validation workflow |
-| `frontend/` | Reserved for the dashboard |
-| `backend/` | Reserved for the control server |
-| `agent/` | Reserved for the host agent |
+| `frontend/` | React dashboard (implemented in Phase 1) |
+| `backend/` | FastAPI control server (implemented in Phase 1) |
+| `agent/` | Python host agent (implemented in Phase 1) |
 | `infra/` | Reserved for future development infrastructure definitions |
-
-The four component directories contain only `.gitkeep`. An `.env.example` is
-intentionally deferred until real configuration variables are defined; Phase 0
-has no runtime configuration contract.
 
 ## Contributing
 
