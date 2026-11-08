@@ -2,10 +2,50 @@
 
 ## Status and authority
 
-This is a **planned architecture**, derived from the supplied
-[PRD v1.1](PRD.md), especially sections 3, 10–12, and 15–19. No component is
-implemented. The source remains labeled draft/review required. This document
-records its direction without asserting group or lecturer approval.
+Phases 1–2 are **implemented** as described below (single-host monitoring +
+Docker deployment MVP). The original planned-architecture notes are
+preserved at the end of this document. The source PRD remains labeled
+draft/review required; this document records implemented reality for the
+implemented phases.
+
+## Implemented architecture (Phases 1–2)
+
+```text
+Dashboard (React/Vite) --HTTP--> Control Server (FastAPI/SQLite) <--poll/result-- Host Agent (Python)
+                                       |                                             |
+                                       |                                        Docker CLI (constrained)
+                                       |                                             v
+                                     Browser                                   Managed containers
+                                                                             (nimbusops-* labels)
+```
+
+- **Control server**: same FastAPI app serves `/api/v1/hosts*` (Phase 1),
+  `/api/v1/applications*`, `/api/v1/templates`, `/api/v1/operations/{id}`
+  (Phase 2, browser namespace), and `/api/v1/agents/*` including
+  `commands/poll` + `commands/{id}/result` (agent namespace, credentialed).
+  SQLite via SQLAlchemy; new Phase 2 tables: `deployment_templates` (seeded
+  catalog), `managed_deployments` (one row per host+template, stable id),
+  `deployment_operations` (durable op records with evidence), and
+  `operation_events` (append-only log).
+- **Command delivery**: outbound-only bounded polling. Agents POST
+  `commands/poll` with their credential; the backend atomically claims
+  QUEUED operations (QUEUED→RUNNING inside a single UPDATE ... WHERE
+  status='QUEUED'), so a command is delivered exactly once. Results are
+  posted back authenticated and are first-write-wins (idempotent).
+- **Agent**: adds `docker_exec.DockerExecutor` (constrained CLI invocation,
+  label-scoped) and `worker.CommandWorker` (bounded poll retries, in-process
+  executed-set dedup, typed outcome submission). The monitoring loop is
+  unchanged and independent: Docker problems never stop telemetry.
+- **Duplicate protection**: one managed deployment per (host, template);
+  a deploy request while an operation is in flight returns that same
+  operation (`deduplicated: true`); results are first-write-wins. The
+  backend, not any single agent process, is the dedup authority.
+- **Honesty rules** (unchanged from Phase 1, extended): container state is
+  agent-reported (`NOT_REPORTED`/null until then, never fabricated);
+  `SUCCEEDED` requires `docker ps` evidence (+ recorded HTTP probe);
+  indeterminable outcomes are `UNKNOWN`, never silently failed/succeeded.
+
+## Planned architecture (Phase 0 source notes; superseded where Phase 2 decided)
 
 ## Components and responsibility flow
 

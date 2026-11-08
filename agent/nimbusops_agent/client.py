@@ -117,3 +117,35 @@ class Sender:
             else:
                 payload[key] = value
         return self._post("/api/v1/agents/telemetry", payload)
+
+    # ---------------------------------------------------------------- Phase 2
+
+    def poll_commands(self) -> dict:
+        """Fetch (and thereby claim) queued operations for this host."""
+        try:
+            resp = self._client.post(
+                f"{self.server_url}/api/v1/agents/commands/poll", json={}, headers=self._headers()
+            )
+        except httpx.HTTPError as exc:
+            raise ConnectionError(f"poll network error: {type(exc).__name__}: {exc}") from exc
+        if resp.status_code in (401, 403):
+            raise AuthError(f"server rejected credentials (HTTP {resp.status_code})")
+        if resp.status_code >= 400:
+            raise ConnectionError(f"poll failed: HTTP {resp.status_code}")
+        return resp.json()
+
+    def submit_command_result(self, operation_id: str, payload: dict) -> tuple[bool, str]:
+        """Report one operation outcome (idempotent server-side)."""
+        try:
+            resp = self._client.post(
+                f"{self.server_url}/api/v1/agents/commands/{operation_id}/result",
+                json=payload,
+                headers=self._headers(),
+            )
+        except httpx.HTTPError as exc:
+            return False, f"network error: {type(exc).__name__}"
+        if 200 <= resp.status_code < 300:
+            return True, "ok"
+        if resp.status_code in (401, 403):
+            raise AuthError(f"server rejected credentials (HTTP {resp.status_code})")
+        return False, f"HTTP {resp.status_code}: {resp.text[:200]}"

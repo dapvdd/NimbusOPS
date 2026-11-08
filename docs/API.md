@@ -1,4 +1,4 @@
-# NimbusOps API — Phase 1 (implemented)
+# NimbusOps API — Phase 2 (Phases 1–2 implemented)
 
 All endpoints are mounted under `/api/v1`. Interactive docs: `/api/docs`
 (OpenAPI: `/api/openapi.json`) when the server is running.
@@ -7,7 +7,7 @@ Deviations from the PRD section 17 planned endpoints are listed at the end.
 Error responses use the contract in docs/SECURITY.md and DATA_CONTRACT.md;
 all timestamps are UTC ISO-8601.
 
-## Public (browser) endpoints — no auth in Phase 1
+## Public (browser) endpoints — no auth (trusted-local; see SECURITY.md)
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -104,10 +104,88 @@ Non-validation errors:
 | Status | Codes | When |
 | --- | --- | --- |
 | 401 | `UNAUTHORIZED` | Missing/invalid enrollment or agent token; revoked credential |
-| 404 | `HOST_NOT_FOUND` | Unknown host id |
-| 409 | — | (reserved; hostname conflicts currently rotate instead) |
-| 422 | FastAPI `detail` shape | Malformed/out-of-range payload |
+| 403 | `FORBIDDEN_HOST` | Agent posting a result for another host's operation |
+| 404 | `HOST_NOT_FOUND`, `DEPLOYMENT_NOT_FOUND`, `OPERATION_NOT_FOUND` | Unknown id |
+| 409 | — | (reserved; duplicate protection is idempotent-return, not 409) |
+| 422 | FastAPI `detail` shape; `INVALID_TEMPLATE` via error contract | Malformed/out-of-range payload; unapproved template |
 | 503 | `ENROLLMENT_DISABLED` | Server started without an enrollment token |
+
+## Applications & deployments (Phase 2)
+
+### Public (browser) endpoints — trusted-local
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/templates` | Approved deployment templates |
+| GET | `/api/v1/applications` | Managed applications + last operation + container state |
+| POST | `/api/v1/applications/deploy` | Create deployment + QUEUED operation → 202 |
+| POST | `/api/v1/applications/{id}/start` | Queue START → 202 |
+| POST | `/api/v1/applications/{id}/stop` | Queue STOP → 202 |
+| GET | `/api/v1/applications/{id}/container-state` | Agent-reported container state (honest unknown) |
+| GET | `/api/v1/operations/{id}` | Operation status/evidence/errors |
+
+`POST /applications/deploy` body: `{"host_id": "...", "template_key": "nginx-demo"}`.
+
+→ `202 {"operation_id","deployment_id","host_id","template_key","status":"QUEUED",
+"container_name","app_url","deduplicated":false}`
+
+Duplicate protection: deploying the same template on the same host while an
+operation is QUEUED/RUNNING returns the **same** operation with
+`deduplicated: true` — repeated clicks cannot create duplicate deployments.
+After a terminal state, a new deploy creates a **new** operation on the same
+deployment.
+
+Operation states: `QUEUED → RUNNING → SUCCEEDED | FAILED | UNKNOWN`.
+`SUCCEEDED` requires agent-reported verifiable evidence (`container_state`
+from `docker ps` + optional `http_ok` probe stored in `result`). `UNKNOWN`
+means the outcome could not be determined (timeout/unverifiable) — it is
+never silently reported as success or failure.
+
+`GET /applications` response (excerpt):
+
+```json
+{
+  "applications": [
+    {
+      "deployment_id": "uuid",
+      "host_id": "uuid",
+      "hostname": "web-01",
+      "template_key": "nginx-demo",
+      "container_name": "nimbusops-nginx-demo-hxxxxxxxx",
+      "app_url": "http://localhost:8080/",
+      "last_operation": { "id": "...", "op_type": "DEPLOY", "status": "SUCCEEDED",
+        "result": {"container_state": "RUNNING", "http_ok": true}, "...": "..." },
+      "container_state": "RUNNING | EXITED | ... | null",
+      "http_ok": true | false | null,
+      "reported_at": "... | null"
+    }
+  ],
+  "count": 1
+}
+```
+
+`container_state` is `null`/`NOT_REPORTED` until the agent reports real
+Docker state — never fabricated.
+
+### Agent command endpoints
+
+| Method | Path | Auth |
+| --- | --- | --- |
+| POST | `/api/v1/agents/commands/poll` | `X-Host-Id` + Bearer agent token |
+| POST | `/api/v1/agents/commands/{op_id}/result` | same |
+
+Poll **claims** atomically (QUEUED→RUNNING): each command is delivered to
+exactly one poll; claimed commands are not re-delivered on reconnect (the
+operation stays RUNNING — an honest "claimed, outcome pending" state).
+Results are first-write-wins: a duplicate result submission gets
+`accepted: false` and never overwrites recorded evidence.
+
+Poll response: `{"commands": [ { ...operation, "template": {key, image,
+container_port, host_port, container_name} } ]}`.
+
+Result body: `{"status": "SUCCEEDED|FAILED|UNKNOWN", "result": {...},
+"error_code": "...", "error_message": "..."}` →
+`200 {"operation_id","status","accepted": true|false}`.
 
 ## Deviations from PRD section 17 planned endpoints
 
@@ -115,6 +193,9 @@ Non-validation errors:
   requires a bootstrap path; not in the planned list).
 - Heartbeat request may carry agent metadata (version/platform) so the
   dashboard's host panel reflects reality without a separate endpoint.
-- `/hosts/{id}/containers`, `/templates`, `/deployments`, `/operations`,
-  `/containers/{id}/start|stop`, `/agents/operations/{id}/result` are Phase 2
-  scope and intentionally absent here.
+- Phase 2 endpoint names: `/templates`, `/applications/*`,
+  `/operations/{id}`, `/agents/commands/*` replace the PRD's planned
+  `/deployments`, `/containers/{id}/start|stop`,
+  `/agents/operations/{id}/result` shapes — deployment identity is the
+  managed application (one per host+template), and container state is
+  agent-reported rather than a separate container entity.

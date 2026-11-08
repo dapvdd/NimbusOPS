@@ -10,9 +10,9 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import agents, public
+from .api import agents, applications, public
 from .core.config import get_settings
-from .core.db import create_all
+from .core.db import create_all, session_scope
 from .core.errors import install_error_handlers
 from .version import VERSION
 
@@ -25,6 +25,11 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     create_all()
+    # Seed the approved deployment-template catalog (idempotent).
+    from .services.deployments import seed_templates
+
+    with session_scope() as db:
+        seed_templates(db)
     yield
 
 
@@ -54,6 +59,7 @@ def create_app() -> FastAPI:
     install_error_handlers(app)
     app.include_router(public.router)
     app.include_router(agents.router)
+    app.include_router(applications.router)
 
     return app
 

@@ -128,3 +128,101 @@ class HealthResponse(BaseModel):
     version: Literal["0.1.0"]
     server_time: datetime
     database: Literal["ok", "degraded"]
+
+
+# ------------------------------------------------------------------ Phase 2
+
+
+class TemplateOut(BaseModel):
+    key: str
+    name: str
+    description: str | None
+    image: str
+    container_port: int
+    host_port: int
+    is_approved: bool
+
+
+class TemplateListResponse(BaseModel):
+    templates: list[TemplateOut]
+
+
+class DeployRequest(BaseModel):
+    host_id: str = Field(min_length=1, max_length=64)
+    template_key: str = Field(min_length=1, max_length=64)
+
+
+class OperationOut(BaseModel):
+    id: str
+    deployment_id: str
+    host_id: str
+    op_type: Literal["DEPLOY", "START", "STOP"]
+    status: Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"]
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+    result: dict | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class DeployResponse(BaseModel):
+    operation_id: str
+    deployment_id: str
+    host_id: str
+    template_key: str
+    status: Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"]
+    container_name: str
+    app_url: str | None = None
+    deduplicated: bool = False
+
+
+class ManagedAppOut(BaseModel):
+    deployment_id: str
+    host_id: str
+    hostname: str | None = None
+    template_key: str
+    container_name: str
+    app_url: str
+    # Latest operation state for this deployment (honest unknown when none).
+    last_operation: OperationOut | None
+    # Agent-reported container state, if any.
+    container_state: str | None
+    http_ok: bool | None
+    reported_at: datetime | None
+
+
+class ManagedAppListResponse(BaseModel):
+    applications: list[ManagedAppOut]
+    count: int
+
+
+class ContainerStateResponse(BaseModel):
+    deployment_id: str
+    container_state: Literal["CREATED", "RUNNING", "PAUSED", "EXITED", "DEAD", "NOT_REPORTED", "UNKNOWN"]
+    http_ok: bool | None
+    reported_at: datetime | None
+    container_name: str
+    app_url: str
+
+
+class CommandPollResponse(BaseModel):
+    commands: list["AgentCommand"]
+
+
+class AgentCommand(OperationOut):
+    """Command delivered to an agent: operation plus execution payload."""
+    template: dict | None = None  # image/ports/name for DEPLOY ops
+
+
+class CommandResultRequest(BaseModel):
+    status: Literal["SUCCEEDED", "FAILED", "UNKNOWN"]
+    result: dict | None = None
+    error_code: str | None = Field(default=None, max_length=64)
+    error_message: str | None = Field(default=None, max_length=512)
+
+
+class CommandResultResponse(BaseModel):
+    operation_id: str
+    status: Literal["SUCCEEDED", "FAILED", "UNKNOWN"]
+    accepted: bool

@@ -8,8 +8,17 @@ A centralized, cloud-ready platform for monitoring Linux hosts and managing Dock
 The control server (FastAPI), dashboard (React/Vite/Tailwind), and host
 agent (Python/psutil) are implemented and tested; see
 [Phase 1 verification](docs/PHASE1_VERIFICATION.md) for what was executed
-and what remains blocked (Ubuntu VM gate). Phase 2 (Docker inventory and
-approved Nginx lifecycle) is not started.
+and what remains blocked (Ubuntu VM gate).
+
+**Phase 2 — Docker deployment MVP: implemented; real-Docker verification
+blocked on the development machine** (no Docker Desktop/WSL installed;
+nothing was installed without authorization). The full deployment
+pipeline — approved Nginx template, durable operation tracking, agent-side
+constrained Docker execution, start/stop lifecycle, dashboard Applications
+view — is implemented with mocked-Docker tests; see
+[Phase 2 verification](docs/PHASE2_VERIFICATION.md). Docker interaction
+uses only fixed argv invocations of the Docker CLI, scoped by
+`nimbusops.*` labels to NimbusOps-created resources.
 
 NimbusOps is an academic Cloud Computing project at Sekolah Vokasi,
 Universitas Gadjah Mada. Development is **product-first, local-first, hybrid-ready**.
@@ -79,8 +88,8 @@ cp backend/.env.example backend/.env   # set NIMBUSOPS_ENROLLMENT_TOKEN
 | Phase | Planned outcome | Product milestone |
 | --- | --- | --- |
 | 0 | Repository foundation | Preparation for PRD approval gate M0 |
-| 1 | Single-host monitoring | First portion of v0.1 |
-| 2 | Docker inventory and approved Nginx lifecycle | Complete v0.1 / M1 |
+| 1 | Single-host monitoring (implemented) | First portion of v0.1 |
+| 2 | Docker inventory and approved Nginx lifecycle (implemented; live Docker verification blocked) | Complete v0.1 / M1 |
 | 3 | Two-host management | v0.2 / M2 |
 | 4 | Private-public infrastructure | v0.3 / M3 |
 | 5 | Advanced reliability and security | Optional v1.0 / M4 |
@@ -96,14 +105,15 @@ foundation does not imply approval of the PRD or completion of a product milesto
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Planned components, boundaries, and decisions |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phase acceptance gates |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local setup for server, dashboard, agent, tests |
-| [docs/API.md](docs/API.md) | Implemented Phase 1 API contract |
+| [docs/API.md](docs/API.md) | Implemented Phase 1–2 API contract |
 | [docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md) | Units, timestamps, thresholds, retention |
 | [docs/SECURITY.md](docs/SECURITY.md) | Enrollment/auth model and known limits |
-| [docs/PHASE1_VERIFICATION.md](docs/PHASE1_VERIFICATION.md) | Executed tests and live evidence |
+| [docs/PHASE1_VERIFICATION.md](docs/PHASE1_VERIFICATION.md) | Executed tests and live evidence (Phase 1) |
+| [docs/PHASE2_VERIFICATION.md](docs/PHASE2_VERIFICATION.md) | Executed tests and evidence (Phase 2) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Group contribution and validation workflow |
-| `frontend/` | React dashboard (implemented in Phase 1) |
-| `backend/` | FastAPI control server (implemented in Phase 1) |
-| `agent/` | Python host agent (implemented in Phase 1) |
+| `frontend/` | React dashboard (monitoring + applications) |
+| `backend/` | FastAPI control server (monitoring + deployment control plane) |
+| `agent/` | Python host agent (telemetry + constrained Docker execution) |
 | `infra/` | Reserved for future development infrastructure definitions |
 
 ## Contributing

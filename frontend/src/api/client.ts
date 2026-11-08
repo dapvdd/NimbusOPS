@@ -5,10 +5,15 @@
 
 import type {
   ApiErrorBody,
+  ContainerStateResponse,
+  DeployResponse,
   HealthResponse,
   Host,
   HostListResponse,
   HostMetricsResponse,
+  ManagedAppListResponse,
+  Operation,
+  TemplateListResponse,
 } from "./types";
 
 export class ApiFailure extends Error {
@@ -58,4 +63,21 @@ export const api = {
   getHost: (id: string) => request<Host>(`/hosts/${encodeURIComponent(id)}`),
   getHostMetrics: (id: string, limit = 120) =>
     request<HostMetricsResponse>(`/hosts/${encodeURIComponent(id)}/metrics?limit=${limit}`),
+  // ---------------------------------------------------------------- Phase 2
+  listTemplates: () => request<TemplateListResponse>("/templates"),
+  listApplications: () => request<ManagedAppListResponse>("/applications"),
+  deploy: (hostId: string, templateKey: string) =>
+    request<DeployResponse>("/applications/deploy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ host_id: hostId, template_key: templateKey }),
+    }),
+  startApp: (deploymentId: string) =>
+    request<DeployResponse>(`/applications/${encodeURIComponent(deploymentId)}/start`, { method: "POST" }),
+  stopApp: (deploymentId: string) =>
+    request<DeployResponse>(`/applications/${encodeURIComponent(deploymentId)}/stop`, { method: "POST" }),
+  getOperation: (operationId: string) =>
+    request<Operation>(`/operations/${encodeURIComponent(operationId)}`),
+  getContainerState: (deploymentId: string) =>
+    request<ContainerStateResponse>(`/applications/${encodeURIComponent(deploymentId)}/container-state`),
 };

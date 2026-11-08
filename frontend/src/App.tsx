@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import Overview from "./views/Overview";
 import HostDetail from "./views/HostDetail";
+import Applications from "./views/Applications";
 import { AppShell } from "./components/AppShell";
 
 export default function App() {
@@ -9,6 +10,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Overview />} />
         <Route path="/hosts/:hostId" element={<HostDetail />} />
+        <Route path="/applications" element={<Applications />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>

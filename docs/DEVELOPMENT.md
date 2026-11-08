@@ -1,12 +1,17 @@
-# NimbusOps Local Development Guide (Phase 1)
+# NimbusOps Local Development Guide (Phases 1–2)
 
-Complete setup for the single-host monitoring stack: FastAPI control
-server, React dashboard, and the NimbusOps host agent.
+Complete setup for the single-host monitoring stack (Phase 1) and the
+Docker deployment MVP (Phase 2): FastAPI control server, React dashboard,
+and the NimbusOps host agent.
 
 ## Prerequisites
 
 - Python 3.11+ (3.13 used during development)
 - Node.js 20+ (24 used during development)
+- Docker Engine (Phase 2 deployment features only) — OPTIONAL. Monitoring
+  works without it; deployment operations report `DOCKER_UNAVAILABLE`.
+  On the development machine Docker was NOT available; see
+  docs/PHASE2_VERIFICATION.md.
 - No global installs: everything lives in a repo-local virtualenv and
   `frontend/node_modules`.
 
@@ -76,6 +81,23 @@ private tunnel — the agent does not negotiate TLS itself.
 `--once` runs a single heartbeat+telemetry cycle and exits (useful for
 smoke tests). `Ctrl+C` stops the agent gracefully.
 
+### Docker deployment features (Phase 2)
+
+When the managed host has a working Docker Engine, the agent picks up
+approved operations (deploy/start/stop) each polling cycle — no extra
+flags. Requirements on the managed host:
+
+- `docker` CLI on the agent's PATH, daemon reachable (no root required
+  beyond normal Docker group membership).
+- Outbound HTTP to the control server only; no inbound ports; the Docker
+  socket is never exposed over TCP by NimbusOps.
+- The agent touches only containers named `nimbusops-*` and only the
+  approved `nginx-demo` template (image `nginx:1.27-alpine`, published on
+  host port 8080). Nothing else on the host's Docker is modified.
+
+When Docker is absent/broken, deployment operations report
+`DOCKER_UNAVAILABLE`/`DOCKER_FAILURE` and monitoring continues unaffected.
+
 ### systemd service (example only — review before any real install)
 
 See `agent/nimbusops-agent.service.example`. It is a template: adjust
@@ -96,8 +118,11 @@ npm run build
 ```
 
 The integration suite starts a real uvicorn server on `127.0.0.1:8991`
-and drives it with the real agent code. It does NOT require an Ubuntu
-VM; the Phase 1 Ubuntu verification is tracked separately in the docs.
+(Phase 1) and `127.0.0.1:8992` (Phase 2) and drives them with the real
+agent code. Phase 2 integration mocks only the Docker executor boundary
+(no Docker Engine on the development machine — labeled MOCKED); everything
+else is real HTTP/SQLite/protocol. It does NOT require an Ubuntu VM; the
+Ubuntu + real-Docker verification is tracked separately in the docs.
 
 ## 5. Full local stack (all three components)
 
@@ -106,7 +131,9 @@ VM; the Phase 1 Ubuntu verification is tracked separately in the docs.
 3. Terminal 3 — agent (see §3) with `NIMBUSOPS_AGENT_SERVER_URL=http://127.0.0.1:8000`.
 
 Open <http://localhost:5173>: the Overview shows the enrolled host with
-live CPU/RAM/disk telemetry updating every 30 seconds.
+live CPU/RAM/disk telemetry updating every 30 seconds. The Applications
+view deploys/starts/stops the approved Nginx demo (requires Docker on the
+agent host; the deployed app answers on <http://localhost:8080>).
 
 ## 6. Configuration reference
 

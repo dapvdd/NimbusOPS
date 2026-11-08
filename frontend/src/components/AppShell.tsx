@@ -57,7 +57,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
             <span className="font-semibold tracking-tight text-ink-100">NimbusOps</span>
             <span className="hidden sm:inline text-[11px] uppercase tracking-widest text-ink-400 border border-ink-600 rounded px-1.5 py-0.5">
-              Phase 1
+              Phase 2
             </span>
           </NavLink>
           <nav className="flex items-center gap-1 text-sm">
@@ -71,6 +71,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               }
             >
               Overview
+            </NavLink>
+            <NavLink
+              to="/applications"
+              className={({ isActive }) =>
+                `px-3 py-1.5 rounded-md transition-colors ${
+                  isActive ? "bg-ink-700 text-ink-100" : "text-ink-300 hover:text-ink-100 hover:bg-ink-800"
+                }`
+              }
+            >
+              Applications
             </NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-4 text-xs text-ink-300">
@@ -96,7 +106,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 py-6">{children}</main>
       <footer className="border-t border-ink-800 text-xs text-ink-400">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 h-10 flex items-center justify-between">
-          <span>NimbusOps — single-host monitoring (Phase 1)</span>
+          <span>NimbusOps — single-host monitoring &amp; app deployment (Phase 2)</span>
           <span>Timestamps in UTC</span>
         </div>
       </footer>
