@@ -64,7 +64,7 @@ def seed_templates(db: Session) -> None:
             "description": "Deterministic single-container Nginx serving the default page.",
             "image": "nginx:1.27-alpine",
             "container_port": 80,
-            "host_port": 8080,
+            "host_port": 18080,
             "is_approved": True,
         },
     ]

@@ -174,7 +174,7 @@ class DockerExecutor:
 
         # Validation first: unapproved scope never touches Docker at all.
         self.ensure_available()
-        host_port = int(template.get("host_port", 8080))
+        host_port = int(template.get("host_port", 18080))
 
         # 1. Pull (explicit image tag; bounded output).
         code, _, err = self._run(["docker", "pull", image])

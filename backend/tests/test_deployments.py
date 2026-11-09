@@ -48,6 +48,14 @@ def test_list_templates_lists_approved_nginx(client):
     assert tmpl["is_approved"] is True
 
 
+def test_nginx_demo_template_uses_stageb_host_port(client):
+    """Stage B: DavidLab hosts SPECTRA on 8080; the demo must publish 18080."""
+    resp = client.get("/api/v1/templates")
+    assert resp.status_code == 200
+    tmpl = next(t for t in resp.json()["templates"] if t["key"] == "nginx-demo")
+    assert tmpl["host_port"] == 18080
+
+
 # ------------------------------------------------------------ deploy happy path
 
 

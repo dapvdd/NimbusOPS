@@ -153,7 +153,7 @@ def test_full_deploy_flow_real_agent_real_backend(server, identity):
     assert app["deployment_id"] == dep_id
     assert app["container_state"] == "RUNNING"
     assert app["http_ok"] is True
-    assert app["app_url"] == "http://localhost:8080/"
+    assert app["app_url"] == "http://localhost:18080/"
 
 
 def test_full_stop_start_flow_real_agent_real_backend(server, identity):
@@ -247,7 +247,7 @@ def test_duplicate_deploy_single_execution(server, identity):
            "op_type": "DEPLOY", "status": "RUNNING", "created_at": "", "updated_at": "",
            "completed_at": None, "result": None, "error_code": None, "error_message": None,
            "template": {"key": "nginx-demo", "image": "nginx:1.27-alpine", "container_port": 80,
-                        "host_port": 8080, "container_name": b1["container_name"]}}
+                        "host_port": 18080, "container_name": b1["container_name"]}}
     sender2 = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
     ex2 = MockDockerExecutor()
     try:
