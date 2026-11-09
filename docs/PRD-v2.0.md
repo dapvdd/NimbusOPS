@@ -4,7 +4,7 @@
 
 **Unified Hybrid Cloud Infrastructure Management Platform**
 
-Versi konsolidasi 2.0 | 9 November 2026 | Status: **FINAL DRAFT — menunggu persetujuan tim/dosen**
+9 November 2026 
 
 Proyek Cloud Computing · Sekolah Vokasi Universitas Gadjah Mada
 
