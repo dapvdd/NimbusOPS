@@ -368,5 +368,5 @@ def get_container_state(db: Session, deployment_id: str) -> dict:
         "http_ok": http_ok,
         "reported_at": reported_at,
         "container_name": dep.container_name,
-        "app_url": app_url_for(tmpl) if tmpl else f"http://localhost:8080/",
+        "app_url": app_url_for(tmpl) if tmpl else f"http://localhost:18080/",
     }
