@@ -1,5 +1,9 @@
 # NimbusOps — PRD v1.1 Source Digest
 
+> Dokumen konsolidasi terbaru: [Final Consolidated PRD v2.0](PRD-v2.0.md)
+> (9 November 2026, **FINAL DRAFT — menunggu persetujuan tim/dosen**).
+> Digest v1.1 ini dipertahankan sebagai riwayat sumber.
+
 ## Provenance and status
 
 This is a structured **digest**, not a verbatim replacement or a newly approved
