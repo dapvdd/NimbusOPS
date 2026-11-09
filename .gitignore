@@ -14,8 +14,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# lib/ lib64/ are Python venv dirnames; anchoring so frontend/src/lib isn't swallowed.
+/lib/
+/lib64/
 parts/
 sdist/
 var/

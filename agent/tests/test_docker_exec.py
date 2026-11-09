@@ -43,6 +43,34 @@ class FakeRunner:
 # ------------------------------------------------------------ availability
 
 
+def test_default_host_port_matches_template_catalog():
+    """Agent's fallback port must match the seeded template (Stage B: 18080)."""
+    results = [
+        (0, "29.9.2", ""),          # docker version
+        (0, "", ""),                # docker pull
+        (0, "c0ffee123456", ""),    # docker run -d
+        (0, "Up 2 seconds", ""),    # docker ps (verify running)
+    ]
+    ex = DockerExecutor(runner=FakeRunner(results))
+    # No host_port in the command template -> executor falls back to default.
+    result = ex.execute(
+        {
+            "op_type": "DEPLOY",
+            "deployment_id": "dep-1",
+            "template": {
+                "key": "nginx-demo",
+                "image": "nginx:1.27-alpine",
+                "container_port": 80,
+                "container_name": "nimbusops-nginx-demo-abc12345",
+            },
+        }
+    )
+    assert result["status"] == "SUCCEEDED", result
+    run_call = next(c for c in ex._runner.calls if c[:2] == ["docker", "run"])  # type: ignore[attr-defined]
+    assert "-p" in run_call
+    assert run_call[run_call.index("-p") + 1].startswith("18080:")
+
+
 def test_docker_unavailable_raises(monkeypatch):
     calls = []
 

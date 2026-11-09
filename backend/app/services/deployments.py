@@ -64,7 +64,7 @@ def seed_templates(db: Session) -> None:
             "description": "Deterministic single-container Nginx serving the default page.",
             "image": "nginx:1.27-alpine",
             "container_port": 80,
-            "host_port": 8080,
+            "host_port": 18080,
             "is_approved": True,
         },
     ]
@@ -254,16 +254,20 @@ def poll_commands(db: Session, host_id: str, limit: int = 8) -> list[AgentComman
             db.add(OperationEvent(operation_id=op_id, event="CLAIMED", detail=f"host={host_id}"))
             op = db.get(DeploymentOperation, op_id)
             cmd = AgentCommand(**_op_out(op).model_dump())
-            if op.op_type == "DEPLOY":
-                dep = db.get(ManagedDeployment, op.deployment_id)
-                tmpl = db.get(DeploymentTemplate, dep.template_key)
-                cmd.template = {
-                    "key": tmpl.key,
-                    "image": tmpl.image,
-                    "container_port": tmpl.container_port,
-                    "host_port": tmpl.host_port,
-                    "container_name": dep.container_name,
-                }
+            # Template payload rides on EVERY op type: the agent needs
+            # container_name to act (DEPLOY runs it; START/STOP address it).
+            # Phase 2 attached it only for DEPLOY, so real START/STOP failed
+            # with UNAPPROVED_OPERATION ("container name '' outside managed
+            # prefix") — caught in Stage B live validation.
+            dep = db.get(ManagedDeployment, op.deployment_id)
+            tmpl = db.get(DeploymentTemplate, dep.template_key)
+            cmd.template = {
+                "key": tmpl.key,
+                "image": tmpl.image,
+                "container_port": tmpl.container_port,
+                "host_port": tmpl.host_port,
+                "container_name": dep.container_name,
+            }
             claimed.append(cmd)
     db.commit()
     return claimed
@@ -364,5 +368,5 @@ def get_container_state(db: Session, deployment_id: str) -> dict:
         "http_ok": http_ok,
         "reported_at": reported_at,
         "container_name": dep.container_name,
-        "app_url": app_url_for(tmpl) if tmpl else f"http://localhost:8080/",
+        "app_url": app_url_for(tmpl) if tmpl else f"http://localhost:18080/",
     }

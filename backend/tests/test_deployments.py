@@ -48,6 +48,14 @@ def test_list_templates_lists_approved_nginx(client):
     assert tmpl["is_approved"] is True
 
 
+def test_nginx_demo_template_uses_stageb_host_port(client):
+    """Stage B: DavidLab hosts SPECTRA on 8080; the demo must publish 18080."""
+    resp = client.get("/api/v1/templates")
+    assert resp.status_code == 200
+    tmpl = next(t for t in resp.json()["templates"] if t["key"] == "nginx-demo")
+    assert tmpl["host_port"] == 18080
+
+
 # ------------------------------------------------------------ deploy happy path
 
 
@@ -237,6 +245,35 @@ def test_stop_then_start_lifecycle(client, online_host):
 def test_stop_requires_existing_deployment(client):
     resp = client.post("/api/v1/applications/no-such-deployment/stop")
     assert resp.status_code == 404
+
+
+def test_lifecycle_commands_carry_template_payload(client, online_host):
+    """Stage B regression: START/STOP commands must include the template
+    (container_name etc.) or the agent cannot name the container and the
+    real run failed with UNAPPROVED_OPERATION ("container name '' outside
+    managed prefix"). Mirrors the DEPLOY template attachment."""
+    host_id, token = online_host
+    dep_id = deploy(client, host_id).json()["deployment_id"]
+    # Simulate successful deploy so lifecycle ops are queueable.
+    op_id = client.post("/api/v1/agents/commands/poll", headers=auth_headers(host_id, token)).json()["commands"][0]["id"]
+    client.post(
+        f"/api/v1/agents/commands/{op_id}/result",
+        json={"status": "SUCCEEDED", "result": {"container_state": "RUNNING", "http_ok": True}},
+        headers=auth_headers(host_id, token),
+    )
+    for lifecycle in ("stop", "start"):
+        op = client.post(f"/api/v1/applications/{dep_id}/{lifecycle}").json()
+        poll = client.post("/api/v1/agents/commands/poll", headers=auth_headers(host_id, token)).json()
+        cmd = next(c for c in poll["commands"] if c["id"] == op["operation_id"])
+        assert cmd["template"] is not None, f"{lifecycle} command must carry template"
+        assert cmd["template"]["container_name"] == "nimbusops-nginx-demo-" + host_id[:8]
+        assert cmd["template"]["key"] == "nginx-demo"
+        # Complete it so the next lifecycle op is queueable.
+        client.post(
+            f"/api/v1/agents/commands/{cmd['id']}/result",
+            json={"status": "SUCCEEDED", "result": {"container_state": "EXITED", "http_ok": None}},
+            headers=auth_headers(host_id, token),
+        )
 
 
 def test_container_state_endpoint(client, online_host):

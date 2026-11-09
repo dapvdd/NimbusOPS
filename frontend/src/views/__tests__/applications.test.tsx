@@ -25,7 +25,7 @@ const templates = {
       description: "Deterministic single-container Nginx.",
       image: "nginx:1.27-alpine",
       container_port: 80,
-      host_port: 8080,
+      host_port: 18080,
       is_approved: true,
     },
   ],
@@ -47,7 +47,7 @@ const runningApp = {
   hostname: "web-01",
   template_key: "nginx-demo",
   container_name: "nimbusops-nginx-demo-abc12345",
-  app_url: "http://localhost:8080/",
+  app_url: "http://localhost:18080/",
   last_operation: {
     id: "op-1",
     deployment_id: "dep-1",
@@ -57,7 +57,7 @@ const runningApp = {
     created_at: "2026-11-08T10:00:00Z",
     updated_at: "2026-11-08T10:01:00Z",
     completed_at: "2026-11-08T10:01:00Z",
-    result: { container_state: "RUNNING", http_ok: true, app_url: "http://localhost:8080/" },
+    result: { container_state: "RUNNING", http_ok: true, app_url: "http://localhost:18080/" },
     error_code: null,
     error_message: null,
   },
@@ -141,7 +141,7 @@ describe("Applications — deploy interaction", () => {
       template_key: "nginx-demo",
       status: "QUEUED",
       container_name: "nimbusops-nginx-demo-abc12345",
-      app_url: "http://localhost:8080/",
+      app_url: "http://localhost:18080/",
       deduplicated: false,
     };
     const opQueued = {
@@ -213,7 +213,7 @@ describe("Applications — deploy interaction", () => {
               template_key: "nginx-demo",
               status: "QUEUED",
               container_name: "nimbusops-nginx-demo-abc12345",
-              app_url: "http://localhost:8080/",
+              app_url: "http://localhost:18080/",
               deduplicated: false,
             }),
           );
@@ -258,7 +258,7 @@ describe("Applications — deploy interaction", () => {
               template_key: "nginx-demo",
               status: "QUEUED",
               container_name: "nimbusops-nginx-demo-abc12345",
-              app_url: "http://localhost:8080/",
+              app_url: "http://localhost:18080/",
               deduplicated: false,
             }),
           );
@@ -293,7 +293,7 @@ describe("Applications — lifecycle controls", () => {
               template_key: "nginx-demo",
               status: "QUEUED",
               container_name: "nimbusops-nginx-demo-abc12345",
-              app_url: "http://localhost:8080/",
+              app_url: "http://localhost:18080/",
               deduplicated: false,
             }),
           );
