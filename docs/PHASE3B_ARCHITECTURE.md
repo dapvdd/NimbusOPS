@@ -206,15 +206,17 @@ Toast: "david-lab has been unregistered. Its history is preserved."
 
 ---
 
-## 4. Open Design Decisions
+## 4. Design Decisions
 
-| ID | Decision | Options | Recommendation |
+**Status after review session 2026-11-10: O1, O6, O7 explicitly ACCEPTED by product owner; O2, O3, O4, O5, O8 accepted as defaults (proposed, unopposed). All eight are now binding for implementation.**
+
+| ID | Decision | Options | Decision (accepted) |
 |---|---|---|---|
-| O1 | Operator auth method | Session cookies + CSRF; API key in env; OIDC gateway | Session cookies + XSRF token (Phase 5 PRD target; Phase 3B must enable it) |
-| O2 | Bootstrap token delivery | Copy in UI; operator types into agent shell; secret manager | Copy in UI with expiry countdown; operator pastes into agent env |
-| O3 | Agent credential lifetime | Permanent (until revoked); rotatable | Permanent until revoked/rotated; operator-initiated rotation |
-| O4 | Credential rotation grace period | 0 (immediate); 5 min; 30 min | 5 minutes default; env-configurable |
-| O5 | Enrollment token compatibility | Deprecate `NIMBUSOPS_ENROLLMENT_TOKEN` (Phase 4); keep as legacy bootstrap for existing hosts | Keep existing hosts on existing credentials; use new bootstrap flow for new enrollments |
-| O6 | DavidLab host migration | Auto-upgrade on first Phase 3B deploy; manual operator action | Auto-upgrade: add `enrollment_status=ENROLLED`, `docker_enabled=false` via migration |
-| O7 | Backend state tracking | Add `enrollment_status` column; `compute_status` only for ENROLLED+ hosts | Add column, update service logic, update API response with new field |
-| O8 | Audit event schema | Append to existing `enrollment_audit`; add new `host_events` table | Add `host_events` table (append-only) alongside existing audit table |
+| O1 | Operator auth method | Session cookies + CSRF; API key in env; OIDC gateway | **ACCEPTED** — Session token (Bearer), 256-bit, hashed at rest, TTL 12h; stored in-memory in the frontend (never localStorage); HttpOnly+SameSite cookie variant only when TLS is active |
+| O2 | Bootstrap token delivery | Copy in UI; operator types into agent shell; secret manager | **ACCEPTED (default)** — shown once in UI with expiry countdown; operator pastes into agent env |
+| O3 | Agent credential lifetime | Permanent (until revoked); rotatable | **ACCEPTED (default)** — permanent until revoked/rotated by operator |
+| O4 | Credential rotation grace period | 0 (immediate); 5 min; 30 min | **ACCEPTED (default)** — 5 minutes, env-configurable |
+| O5 | Enrollment token compatibility | Deprecate `NIMBUSOPS_ENROLLMENT_TOKEN` (Phase 4); keep as legacy bootstrap for existing hosts | **ACCEPTED (default)** — legacy path accepted during Phase 3B transition; removed no earlier than Phase 4 |
+| O6 | DavidLab host migration | Auto-upgrade on first Phase 3B deploy; manual operator action | **ACCEPTED** — auto-upgrade: `enrollment_status='ENROLLED'`, `docker_enabled=false` via migration; existing credential keeps working; Docker stays locked until explicitly enabled |
+| O7 | DB migration mechanism | Alembic; hand-written idempotent upgrade | **ACCEPTED** — Alembic, additive-only revisions (baseline + `0002_phase3b`) |
+| O8 | Audit event schema | Append to existing `enrollment_audit`; add new `host_events` table | **ACCEPTED (default)** — new append-only `host_events` table (event/actor/detail); `enrollment_audit` retained for compatibility |
