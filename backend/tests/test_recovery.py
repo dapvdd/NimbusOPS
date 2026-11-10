@@ -20,7 +20,15 @@ from backend.tests.test_operator_auth import _seed_operator
 
 
 def _deploy(client, host_id: str) -> str:
-    resp = client.post("/api/v1/applications/deploy", json={"host_id": host_id, "template_key": "nginx-demo"})
+    from backend.tests.test_docker_authz import _login_admin, _patch_docker
+
+    admin = _login_admin(client)
+    assert _patch_docker(client, admin, host_id, True).status_code == 200
+    resp = client.post(
+        "/api/v1/applications/deploy",
+        headers={"Authorization": f"Bearer {admin}"},
+        json={"host_id": host_id, "template_key": "nginx-demo"},
+    )
     assert resp.status_code == 202, resp.text
     return resp.json()["operation_id"]
 

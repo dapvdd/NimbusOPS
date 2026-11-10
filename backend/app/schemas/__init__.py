@@ -41,6 +41,8 @@ class HeartbeatResponse(BaseModel):
     status: Literal["ONLINE", "STALE", "OFFLINE"]
     server_time: datetime
     heartbeat_interval_seconds: int
+    # Phase 3B (§7.2): agent refuses Docker ops when False.
+    docker_enabled: bool = False
 
 
 class TelemetryRequest(BaseModel):

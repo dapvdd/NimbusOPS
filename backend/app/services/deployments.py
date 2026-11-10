@@ -271,7 +271,7 @@ def create_lifecycle_operation(db: Session, deployment_id: str, op_type: str) ->
 # --------------------------------------------------------- agent command API
 
 
-def poll_commands(db: Session, host_id: str, limit: int = 8) -> list[AgentCommand]:
+def poll_commands(db: Session, host_id: str, limit: int = 8, docker_enabled: bool = True) -> list[AgentCommand]:
     """Atomically claim QUEUED ops for this host: QUEUED -> RUNNING.
 
     A claimed op is delivered exactly once (claim is part of delivery);
@@ -279,16 +279,21 @@ def poll_commands(db: Session, host_id: str, limit: int = 8) -> list[AgentComman
     never re-delivered.
 
     Phase 3B: the reconciler runs first, so an op whose agent died mid-run
-    (past `timeout_at`) is back in QUEUED and claimable again.
+    (past `timeout_at`) is back in QUEUED and claimable again. When
+    `docker_enabled` is False, DEPLOY ops are NOT claimed (§5.3): they remain
+    QUEUED until an operator enables Docker.
     """
     now = _utcnow()
     reconcile_timed_out_ops(db, now)
-    queued_ids = db.scalars(
+    claim_query = (
         select(DeploymentOperation.id)
         .where(DeploymentOperation.host_id == host_id, DeploymentOperation.status == "QUEUED")
         .order_by(DeploymentOperation.created_at.asc())
         .limit(limit)
-    ).all()
+    )
+    if not docker_enabled:
+        claim_query = claim_query.where(DeploymentOperation.op_type != "DEPLOY")
+    queued_ids = db.scalars(claim_query).all()
     claimed: list[AgentCommand] = []
     for op_id in queued_ids:
         # Atomic claim: UPDATE ... WHERE status='QUEUED' guards against

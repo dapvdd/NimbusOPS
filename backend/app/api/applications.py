@@ -1,15 +1,18 @@
 """Applications API (browser-facing): templates, deploy, lifecycle, state.
 
-Phase 2 trusted-local model: mutating application endpoints are
-browser-initiated and documented as unauthenticated in docs/SECURITY.md
-(restriction: trusted local development environments only).
+Phase 3B: mutating application endpoints require an operator session (AC-01);
+Docker-touching operations additionally require `docker_enabled=true` on the
+target host (Docker default-off, contract §6). Read endpoints remain
+unauthenticated (trusted-local model, Phase 3B scope).
 """
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from ..core.codes import ErrorCode
 from ..core.db import get_db
-from ..models import DeploymentTemplate
+from ..core.errors import ApiError
+from ..models import DeploymentTemplate, Host
 from ..schemas import (
     ContainerStateResponse,
     DeployRequest,
@@ -19,8 +22,22 @@ from ..schemas import (
     TemplateListResponse,
 )
 from ..services import deployments as svc
+from .operators import require_operator
 
 router = APIRouter(prefix="/api/v1")
+
+
+def _require_docker_enabled(db: Session, host_id: str) -> Host:
+    host = db.get(Host, host_id)
+    if host is None:
+        raise ApiError(404, ErrorCode.HOST_NOT_FOUND, f"host {host_id} not found")
+    if not host.docker_enabled:
+        raise ApiError(
+            403,
+            ErrorCode.DOCKER_NOT_AUTHORIZED,
+            "docker operations are disabled for this host; an operator must enable them",
+        )
+    return host
 
 
 def _op_response(db: Session, dep, op, dedup: bool) -> DeployResponse:
@@ -63,21 +80,38 @@ def list_applications(db: Session = Depends(get_db)) -> ManagedAppListResponse:
 
 
 @router.post("/applications/deploy", response_model=DeployResponse, status_code=202)
-def deploy(req: DeployRequest, db: Session = Depends(get_db)) -> DeployResponse:
-    dep, op, dedup = svc.create_deployment(db, req)
-    return _op_response(db, dep, op, dedup)
+def deploy(
+    req: DeployRequest,
+    op: object = Depends(require_operator(role="ADMIN")),
+    db: Session = Depends(get_db),
+) -> DeployResponse:
+    _require_docker_enabled(db, req.host_id)
+    dep, op_row, dedup = svc.create_deployment(db, req)
+    return _op_response(db, dep, op_row, dedup)
 
 
 @router.post("/applications/{deployment_id}/start", response_model=DeployResponse, status_code=202)
-def start_app(deployment_id: str, db: Session = Depends(get_db)) -> DeployResponse:
-    dep, op, dedup = svc.create_lifecycle_operation(db, deployment_id, "START")
-    return _op_response(db, dep, op, dedup)
+def start_app(
+    deployment_id: str,
+    op: object = Depends(require_operator(role="ADMIN")),
+    db: Session = Depends(get_db),
+) -> DeployResponse:
+    dep = svc._get_deployment_or_404(db, deployment_id)
+    _require_docker_enabled(db, dep.host_id)
+    dep, op_row, dedup = svc.create_lifecycle_operation(db, deployment_id, "START")
+    return _op_response(db, dep, op_row, dedup)
 
 
 @router.post("/applications/{deployment_id}/stop", response_model=DeployResponse, status_code=202)
-def stop_app(deployment_id: str, db: Session = Depends(get_db)) -> DeployResponse:
-    dep, op, dedup = svc.create_lifecycle_operation(db, deployment_id, "STOP")
-    return _op_response(db, dep, op, dedup)
+def stop_app(
+    deployment_id: str,
+    op: object = Depends(require_operator(role="ADMIN")),
+    db: Session = Depends(get_db),
+) -> DeployResponse:
+    dep = svc._get_deployment_or_404(db, deployment_id)
+    _require_docker_enabled(db, dep.host_id)
+    dep, op_row, dedup = svc.create_lifecycle_operation(db, deployment_id, "STOP")
+    return _op_response(db, dep, op_row, dedup)
 
 
 @router.get("/applications/{deployment_id}/container-state", response_model=ContainerStateResponse)

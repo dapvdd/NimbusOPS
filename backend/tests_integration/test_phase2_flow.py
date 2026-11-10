@@ -117,11 +117,55 @@ def http_get(path: str) -> tuple[int, dict]:
         return e.code, json.loads(e.read().decode())
 
 
+def operator_session(server) -> dict:
+    """Login an ADMIN operator over real HTTP and return auth headers.
+
+    Phase 3B: mutation endpoints require an operator session; integration
+    tests act as the dashboard does (login, then Bearer header).
+    """
+    from sqlalchemy import select as _select
+
+    from backend.app.core.db import SessionLocal as SL
+    from backend.app.core.security import hash_operator_password
+    from backend.app.models import Operator
+
+    db = SL()
+    try:
+        existing = db.scalar(_select(Operator).where(Operator.username == "admin"))
+        if existing is None:
+            db.add(Operator(username="admin", password_hash=hash_operator_password("int-secret-pw"), role="ADMIN"))
+            db.commit()
+    finally:
+        db.close()
+    status, body = http_post("/api/v1/operators/login", {"username": "admin", "password": "int-secret-pw"})
+    assert status == 200, body
+    return {"Authorization": f"Bearer {body['session_token']}"}
+
+
+def enable_docker(server, host_id: str, headers: dict) -> None:
+    """PATCH docker_enabled=true (Phase 3B: Docker default-off)."""
+    req = urllib.request.Request(
+        f"{BASE_URL}/api/v1/hosts/{host_id}",
+        data=json.dumps({"docker_enabled": True}).encode(),
+        headers={"Content-Type": "application/json", **headers},
+        method="PATCH",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            assert r.status == 200
+    except urllib.error.HTTPError as e:
+        raise AssertionError(f"PATCH docker_enabled failed: {e.code} {e.read().decode()}")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode())
+
+
 def test_full_deploy_flow_real_agent_real_backend(server, identity):
-    """Dashboard-equivalent flow: deploy -> agent poll -> result -> state."""
+    """Dashboard-equivalent flow: login, enable Docker, deploy -> poll -> result -> state."""
     host_id, token = identity
+    hdrs = operator_session(server)
+    enable_docker(server, host_id, hdrs)
     # 1. Deploy via public API (as the dashboard does).
-    status, body = http_post("/api/v1/applications/deploy", deploy_request(host_id))
+    status, body = http_post("/api/v1/applications/deploy", deploy_request(host_id), headers=hdrs)
     assert status == 202, body
     op_id = body["operation_id"]
     dep_id = body["deployment_id"]
@@ -158,7 +202,9 @@ def test_full_deploy_flow_real_agent_real_backend(server, identity):
 
 def test_full_stop_start_flow_real_agent_real_backend(server, identity):
     host_id, token = identity
-    _, body = http_post("/api/v1/applications/deploy", deploy_request(host_id))
+    hdrs = operator_session(server)
+    enable_docker(server, host_id, hdrs)
+    _, body = http_post("/api/v1/applications/deploy", deploy_request(host_id), headers=hdrs)
     dep_id = body["deployment_id"]
     op_id = body["operation_id"]
 
@@ -171,7 +217,7 @@ def test_full_stop_start_flow_real_agent_real_backend(server, identity):
         sender.close()
 
     # STOP via dashboard-equivalent call.
-    status, stop_body = http_post(f"/api/v1/applications/{dep_id}/stop", None)
+    status, stop_body = http_post(f"/api/v1/applications/{dep_id}/stop", None, headers=hdrs)
     assert status == 202
     stop_op = stop_body["operation_id"]
 
@@ -192,7 +238,7 @@ def test_full_stop_start_flow_real_agent_real_backend(server, identity):
     assert op["result"]["container_state"] == "EXITED"
 
     # START again.
-    status, start_body = http_post(f"/api/v1/applications/{dep_id}/start", None)
+    status, start_body = http_post(f"/api/v1/applications/{dep_id}/start", None, headers=hdrs)
     assert status == 202
     start_op = start_body["operation_id"]
     sender = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
@@ -211,8 +257,10 @@ def test_full_stop_start_flow_real_agent_real_backend(server, identity):
 def test_duplicate_deploy_single_execution(server, identity):
     """Repeated deploy clicks: one deployment, one operation, one execution."""
     host_id, token = identity
-    s1, b1 = http_post("/api/v1/applications/deploy", deploy_request(host_id))
-    s2, b2 = http_post("/api/v1/applications/deploy", deploy_request(host_id))
+    hdrs = operator_session(server)
+    enable_docker(server, host_id, hdrs)
+    s1, b1 = http_post("/api/v1/applications/deploy", deploy_request(host_id), headers=hdrs)
+    s2, b2 = http_post("/api/v1/applications/deploy", deploy_request(host_id), headers=hdrs)
     assert s1 == 202 and s2 == 202
     assert b1["operation_id"] == b2["operation_id"]
 
@@ -271,7 +319,9 @@ def test_host_disconnect_during_operation_recoverable(server, identity):
     """Agent claims, crashes before result; reconnects; op stays RUNNING
     (honest: outcome genuinely unknown until agent re-reports or times out)."""
     host_id, token = identity
-    _, body = http_post("/api/v1/applications/deploy", deploy_request(host_id))
+    hdrs = operator_session(server)
+    enable_docker(server, host_id, hdrs)
+    _, body = http_post("/api/v1/applications/deploy", deploy_request(host_id), headers=hdrs)
     op_id = body["operation_id"]
 
     # Agent polls (claims) then "dies" (no result).
@@ -299,7 +349,9 @@ def test_host_disconnect_during_operation_recoverable(server, identity):
 
 def test_failed_operation_recorded_with_error_details(server, identity):
     host_id, token = identity
-    _, body = http_post("/api/v1/applications/deploy", deploy_request(host_id))
+    hdrs = operator_session(server)
+    enable_docker(server, host_id, hdrs)
+    _, body = http_post("/api/v1/applications/deploy", deploy_request(host_id), headers=hdrs)
     op_id = body["operation_id"]
 
     sender = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)

@@ -12,9 +12,20 @@ from backend.tests.conftest import auth_headers
 
 
 def deploy(client, host_id, template_key="nginx-demo"):
+    """Deploy helper.
+
+    Phase 3B: mutations require an operator session and docker_enabled=true.
+    The helper logs in (get-or-create admin), enables Docker, and sends the
+    authenticated request so Phase 2 tests keep exercising deploy semantics.
+    """
+    from backend.tests.test_docker_authz import _login_admin, _patch_docker
+
+    admin = _login_admin(client)
+    _patch_docker(client, admin, host_id, True)
     return client.post(
         "/api/v1/applications/deploy",
         json={"host_id": host_id, "template_key": template_key},
+        headers={"Authorization": f"Bearer {admin}"},
     )
 
 
@@ -217,8 +228,11 @@ def test_stop_then_start_lifecycle(client, online_host):
         json={"status": "SUCCEEDED", "result": {"container_state": "RUNNING", "http_ok": True}},
         headers=auth_headers(host_id, token),
     )
-    # Stop the deployment.
-    stop = client.post(f"/api/v1/applications/{dep_id}/stop")
+    # Stop the deployment (operator auth required in Phase 3B).
+    from backend.tests.test_docker_authz import _login_admin
+
+    admin = _login_admin(client)
+    stop = client.post(f"/api/v1/applications/{dep_id}/stop", headers={"Authorization": f"Bearer {admin}"})
     assert stop.status_code == 202, stop.text
     stop_body = stop.json()
     assert stop_body["status"] == "QUEUED"
@@ -227,7 +241,16 @@ def test_stop_then_start_lifecycle(client, online_host):
 
 
 def test_stop_requires_existing_deployment(client):
+    """Unauthenticated first (operator gate), then unknown deployment 404."""
     resp = client.post("/api/v1/applications/no-such-deployment/stop")
+    assert resp.status_code == 401
+    from backend.tests.test_docker_authz import _login_admin
+
+    admin = _login_admin(client)
+    resp = client.post(
+        "/api/v1/applications/no-such-deployment/stop",
+        headers={"Authorization": f"Bearer {admin}"},
+    )
     assert resp.status_code == 404
 
 
@@ -246,7 +269,13 @@ def test_lifecycle_commands_carry_template_payload(client, online_host):
         headers=auth_headers(host_id, token),
     )
     for lifecycle in ("stop", "start"):
-        op = client.post(f"/api/v1/applications/{dep_id}/{lifecycle}").json()
+        from backend.tests.test_docker_authz import _login_admin
+
+        admin = _login_admin(client)
+        op = client.post(
+            f"/api/v1/applications/{dep_id}/{lifecycle}",
+            headers={"Authorization": f"Bearer {admin}"},
+        ).json()
         poll = client.post("/api/v1/agents/commands/poll", headers=auth_headers(host_id, token)).json()
         cmd = next(c for c in poll["commands"] if c["id"] == op["operation_id"])
         assert cmd["template"] is not None, f"{lifecycle} command must carry template"
@@ -294,9 +323,31 @@ def test_operation_states_transitions_visible(client, online_host):
 
 
 def test_unauthed_mutation_rejected(client, online_host):
-    """Phase 2 deployments are browser-initiated; trusted-local model means
-    unauthenticated mutation is accepted but MUST be documented. This test
-    pins the current documented behavior."""
+    """REWRITTEN Phase 2 pin (was: unauthenticated mutation accepted 202).
+
+    Phase 3B AC-01: application mutations require an operator session —
+    401 without, 202 with (gerbang keamanan, bukan pelemahan).
+    """
+    from backend.tests.test_docker_authz import _login_admin
+
+    admin = _login_admin(client)
     host_id, _ = online_host
-    resp = deploy(client, host_id)
-    assert resp.status_code == 202
+    assert client.patch(
+        f"/api/v1/hosts/{host_id}",
+        headers={"Authorization": f"Bearer {admin}"},
+        json={"docker_enabled": True},
+    ).status_code == 200
+
+    no_auth = client.post(
+        "/api/v1/applications/deploy",
+        json={"host_id": host_id, "template_key": "nginx-demo"},
+    )
+    assert no_auth.status_code == 401
+    assert no_auth.json()["error"]["code"] == "OPERATOR_AUTH_REQUIRED"
+
+    ok = client.post(
+        "/api/v1/applications/deploy",
+        headers={"Authorization": f"Bearer {admin}"},
+        json={"host_id": host_id, "template_key": "nginx-demo"},
+    )
+    assert ok.status_code == 202

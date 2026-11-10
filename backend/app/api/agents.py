@@ -32,6 +32,10 @@ router = APIRouter(prefix="/api/v1/agents")
 @router.post("/enroll", response_model=EnrollResponse)
 def enroll(req: EnrollRequest, db: Session = Depends(get_db)) -> EnrollResponse:
     settings = get_settings()
+    # Server-side sim isolation: simulated hostnames never enroll.
+    if req.hostname.startswith("sim-"):
+        host_service.record_enrollment_denied(db, req.hostname, "simulated hostname rejected")
+        raise ApiError(400, ErrorCode.SIMULATED_HOST_REJECTED, "simulated hostnames are rejected by the control server")
     if req.bootstrap_token:
         # Phase 3B secure path: single-use, operator-issued, hostname-scoped.
         token_row = enrollment_service.consume_bootstrap_token(db, req.bootstrap_token, req.hostname)
@@ -61,6 +65,16 @@ def _agent_token(header_value: str | None) -> str:
     return header_value.removeprefix("Bearer ").strip()
 
 
+def _reject_simulated_host(x_host_id: str | None) -> None:
+    """Server-side sim isolation (threat I2): `sim-*` ids never reach services."""
+    if x_host_id and x_host_id.startswith("sim-"):
+        raise ApiError(
+            400,
+            ErrorCode.SIMULATED_HOST_REJECTED,
+            "simulated host ids are rejected by the control server",
+        )
+
+
 @router.post("/heartbeat", response_model=HeartbeatResponse)
 def heartbeat(
     req: HeartbeatRequest,
@@ -68,6 +82,7 @@ def heartbeat(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> HeartbeatResponse:
+    _reject_simulated_host(x_host_id)
     token = _agent_token(authorization)
     host = host_service.authenticate_host(db, x_host_id, token)
     now = host_service.touch_heartbeat(db, host, req)
@@ -77,6 +92,7 @@ def heartbeat(
         status=host_service.compute_status(now, now, stale_s, offline_s),
         server_time=now,
         heartbeat_interval_seconds=max(5, stale_s // 3),
+        docker_enabled=bool(host.docker_enabled),
     )
 
 
@@ -109,11 +125,14 @@ def poll_commands(
     db: Session = Depends(get_db),
 ) -> CommandPollResponse:
     """Agent claims its QUEUED operations (atomic claim; exactly-once delivery)."""
+    _reject_simulated_host(x_host_id)
     if not x_host_id:
         raise ApiError(401, ErrorCode.UNAUTHORIZED, "missing X-Host-Id header")
     token = _agent_token(authorization)
-    host_service.authenticate_host(db, x_host_id, token)
-    commands: list[AgentCommand] = deployments_service.poll_commands(db, x_host_id)
+    host = host_service.authenticate_host(db, x_host_id, token)
+    commands: list[AgentCommand] = deployments_service.poll_commands(
+        db, x_host_id, docker_enabled=bool(host.docker_enabled)
+    )
     return CommandPollResponse(commands=commands)
 
 
@@ -126,6 +145,7 @@ def submit_command_result(
     db: Session = Depends(get_db),
 ) -> CommandResultResponse:
     """Agent reports an operation outcome. First write wins (idempotent)."""
+    _reject_simulated_host(x_host_id)
     if not x_host_id:
         raise ApiError(401, ErrorCode.UNAUTHORIZED, "missing X-Host-Id header")
     token = _agent_token(authorization)
