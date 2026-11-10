@@ -1,0 +1,105 @@
+name: CI
+
+# Quality gates for NimbusOps. Runs only trusted, read-only checks:
+# no deployment, no Docker Engine, no SSH, no Tailscale, no production secrets.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Least privilege: every job only reads the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Pull requests supersede older runs; every push to main gets a completed run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend-tests:
+    name: Python tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # Third-party actions are pinned to immutable commit SHAs.
+      # Version comments are for humans; update both together.
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13.7"
+
+      # No pip cache: the repository pins direct dependencies in
+      # requirements.txt but has no hash-locked Python lockfile.
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --disable-pip-version-check \
+            -r backend/requirements.txt \
+            -r agent/requirements.txt
+
+      # Covers backend/tests, agent/tests, and backend/tests_integration
+      # via pytest.ini. Integration tests use loopback HTTP and a mocked
+      # Docker executor; no Docker Engine or external host is required.
+      - name: Run Python test suite
+        run: python -m pytest -q
+
+  frontend-tests:
+    name: Frontend unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.15.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run Vitest
+        run: npm test
+
+  frontend-build:
+    name: TypeScript and Vite build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.15.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Validate TypeScript
+        run: npx tsc -b
+
+      - name: Build production bundle
+        run: npx vite build
