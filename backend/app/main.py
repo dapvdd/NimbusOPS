@@ -34,7 +34,27 @@ async def lifespan(_: FastAPI):
 
     with session_scope() as db:
         seed_templates(db)
-    yield
+
+    # Phase 3B (threat I4): periodic claim-timeout reconciler.
+    import asyncio
+
+    from .core.config import get_settings
+    from .services.deployments import reconcile_timed_out_ops
+
+    async def _reconcile_loop() -> None:
+        interval = max(30, min(300, get_settings().op_claim_timeout_seconds // 4))
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                reconcile_timed_out_ops()
+            except Exception:  # noqa: BLE001 — reconciler must never kill the app
+                logging.getLogger("nimbusops.recovery").exception("reconcile pass failed")
+
+    task = asyncio.create_task(_reconcile_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
 
 
 def create_app() -> FastAPI:

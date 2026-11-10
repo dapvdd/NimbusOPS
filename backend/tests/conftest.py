@@ -70,6 +70,24 @@ def db_session():
         db.close()
 
 
+@pytest.fixture()
+def online_host(client, enroll_token):
+    """Enroll a host and make it ONLINE via a heartbeat."""
+    resp = client.post(
+        "/api/v1/agents/enroll",
+        json={"hostname": "deploy-host", "enrollment_token": enroll_token},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    hb = client.post(
+        "/api/v1/agents/heartbeat",
+        json={"agent_version": "0.2.0"},
+        headers=auth_headers(body["host_id"], body["agent_token"]),
+    )
+    assert hb.status_code == 200, hb.text
+    return body["host_id"], body["agent_token"]
+
+
 def auth_headers(host_id: str, token: str) -> dict:
     """Plain helper (NOT a fixture): legacy tests import and call this directly."""
     return {"X-Host-Id": host_id, "Authorization": f"Bearer {token}"}
