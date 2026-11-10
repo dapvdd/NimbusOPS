@@ -152,11 +152,11 @@ function AppRow({ app, onAction }: { app: ManagedApp; onAction: () => void }) {
   );
 }
 
-export default function Applications() {
+export default function Applications({ selectedHostId }: { selectedHostId?: string } = {}) {
   const [templates, setTemplates] = useState<TemplateListResponse | null>(null);
   const [apps, setApps] = useState<ManagedAppListResponse | null>(null);
   const [hosts, setHosts] = useState<{ id: string; hostname: string; status: string }[]>([]);
-  const [hostId, setHostId] = useState("");
+  const [hostId, setHostId] = useState(selectedHostId ?? "");
   const [error, setError] = useState<ApiFailure | null>(null);
   const [loading, setLoading] = useState(true);
   const [deploying, setDeploying] = useState(false);
@@ -240,7 +240,7 @@ export default function Applications() {
     );
 
   const selectedHost = hosts.find((h) => h.id === hostId);
-  const applications = apps?.applications ?? [];
+  const applications = (apps?.applications ?? []).filter(app => !selectedHostId || app.host_id === selectedHostId);
 
   return (
     <div className="space-y-6">
@@ -256,6 +256,7 @@ export default function Applications() {
           <label className="text-xs text-ink-300">
             Host
             <select
+              disabled={Boolean(selectedHostId)}
               value={hostId}
               onChange={(e) => setHostId(e.target.value)}
               className="mt-1 block rounded-md border border-ink-600 bg-ink-900 px-2 py-1.5 text-sm text-ink-100"

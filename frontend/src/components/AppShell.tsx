@@ -3,6 +3,7 @@ import { NavLink } from "react-router-dom";
 import { api } from "../api/client";
 import type { HealthResponse } from "../api/types";
 import { formatUtcTime } from "../lib/format";
+import { Sidebar } from "./Sidebar";
 
 /**
  * Top bar with brand, health indicator, and primary navigation. Health is
@@ -48,7 +49,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="console-layout">
+      <Sidebar />
+      <div className="min-w-0 flex min-h-screen flex-col">
       <header className="border-b border-ink-700 bg-ink-900/80 backdrop-blur sticky top-0 z-10">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 h-14 flex items-center gap-6">
           <NavLink to="/" className="flex items-center gap-2.5 shrink-0">
@@ -57,10 +60,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
             <span className="font-semibold tracking-tight text-ink-100">NimbusOps</span>
             <span className="hidden sm:inline text-[11px] uppercase tracking-widest text-ink-400 border border-ink-600 rounded px-1.5 py-0.5">
-              Phase 2
+              Phase 3A
             </span>
           </NavLink>
-          <nav className="flex items-center gap-1 text-sm">
+          <nav className="hidden">
             <NavLink
               to="/"
               end
@@ -106,10 +109,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 py-6">{children}</main>
       <footer className="border-t border-ink-800 text-xs text-ink-400">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 h-10 flex items-center justify-between">
-          <span>NimbusOps — single-host monitoring &amp; app deployment (Phase 2)</span>
+          <span>NimbusOps — infrastructure console</span>
           <span>Timestamps in UTC</span>
         </div>
       </footer>
+      </div>
     </div>
   );
 }

@@ -31,6 +31,11 @@ export class ApiFailure extends Error {
 const API_BASE = "/api/v1";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const ids = path.split(/[/?]/).map(decodeURIComponent);
+  const hostId = typeof init?.body === "string" ? (JSON.parse(init.body) as { host_id?: string }).host_id : undefined;
+  if (ids.some(id => id.startsWith("sim-")) || hostId?.startsWith("sim-")) {
+    throw new ApiFailure("http", "Simulated resources cannot access real infrastructure endpoints.", 400);
+  }
   let resp: Response;
   try {
     resp = await fetch(`${API_BASE}${path}`, {
