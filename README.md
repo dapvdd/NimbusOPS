@@ -68,7 +68,8 @@ the Docker socket locally. The browser never accesses the agent or Docker direct
 See [Architecture](docs/ARCHITECTURE.md) for boundaries and pending decisions,
 [API](docs/API.md) for the implemented endpoint contract,
 [Data contract](docs/DATA_CONTRACT.md) for units/thresholds, and
-[Security](docs/SECURITY.md) for the Phase 1 trust model.
+[Security](docs/SECURITY.md) for the trust model (Phases 1–3B). Phase 3B
+secure enrollment: [verification](docs/PHASE3B_VERIFICATION.md).
 
 ## Quick start (Phase 1)
 
