@@ -105,6 +105,9 @@ def enroll_host(db: Session, req: EnrollRequest) -> tuple[Host, str]:
     host = Host(
         hostname=req.hostname,
         agent_token_hash=hash_token(token := generate_agent_token()),
+        enrollment_status="ENROLLED",
+        docker_enabled=False,
+        credential_version=1,
         agent_version=req.agent_version,
         platform=req.platform,
         platform_release=req.platform_release,

@@ -25,6 +25,10 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     create_all()
+    # Phase 3B: bring the DB to the current shape (additive-only, idempotent).
+    from .core.migrations import upgrade_phase3b
+
+    upgrade_phase3b()
     # Seed the approved deployment-template catalog (idempotent).
     from .services.deployments import seed_templates
 
