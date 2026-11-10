@@ -162,8 +162,6 @@ def upgrade_phase3b(database_url: str | None = None) -> None:
         if existing == 0:
             conn.execute(
                 text(
-                    f"INSERT INTO {MIGRATION_MARKER_TABLE} (applied_at, revision) "
-                    "(CURRENT_TIMESTAMP, '0002_phase3b')" if False else
                     f"INSERT INTO {MIGRATION_MARKER_TABLE} (applied_at, revision) VALUES (CURRENT_TIMESTAMP, '0002_phase3b')"
                 )
             )

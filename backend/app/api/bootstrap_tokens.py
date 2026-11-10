@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..core.codes import ErrorCode
+from ..core.config import get_settings
 from ..core.db import get_db
 from ..core.errors import ApiError
 from ..models import BootstrapToken
@@ -51,7 +52,10 @@ def issue_token(
     op: object = Depends(require_operator(role="ADMIN")),
     db: Session = Depends(get_db),
 ) -> dict:
-    row, plaintext = issue_bootstrap_token(db, op, req.hostname, req.expires_in_seconds or 600)
+    settings = get_settings()
+    row, plaintext = issue_bootstrap_token(
+        db, op, req.hostname, req.expires_in_seconds or settings.bootstrap_token_ttl_seconds
+    )
     return {
         "id": row.id,
         "hostname": row.hostname,
