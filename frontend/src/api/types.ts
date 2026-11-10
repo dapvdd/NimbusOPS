@@ -31,6 +31,9 @@ export interface Host {
   last_telemetry_at: string | null;
   latest_metrics: LatestMetrics | null;
   is_revoked: boolean;
+  /** Phase 3B lifecycle state; REVOKED is canonical over is_revoked. */
+  enrollment_status: "PENDING" | "ENROLLED" | "ONLINE" | "STALE" | "OFFLINE" | "REVOKED";
+  docker_enabled: boolean;
 }
 
 export interface HostListResponse {
@@ -140,4 +143,57 @@ export interface ContainerStateResponse {
   reported_at: string | null;
   container_name: string;
   app_url: string;
+}
+
+// ---------------------------------------------------------------- Phase 3B
+
+export type OperatorRole = "ADMIN" | "VIEWER";
+
+export interface LoginResponse {
+  session_token: string;
+  operator_id: string;
+  role: OperatorRole;
+  expires_at: string;
+}
+
+export interface MeResponse {
+  operator_id: string;
+  username: string;
+  role: OperatorRole;
+}
+
+export interface BootstrapTokenIssued {
+  id: string;
+  hostname: string;
+  /** Shown once; never stored server-side. */
+  token: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface BootstrapTokenInfo {
+  id: string;
+  hostname: string;
+  created_at: string;
+  expires_at: string;
+  consumed_at: string | null;
+  consumed_by_host_id: string | null;
+  revoked_at: string | null;
+}
+
+export interface BootstrapTokenListResponse {
+  tokens: BootstrapTokenInfo[];
+  count: number;
+}
+
+export interface RotateCredentialResponse {
+  host_id: string;
+  new_agent_token: string;
+  old_token_expires_at: string;
+}
+
+export interface ReenrollResponse {
+  bootstrap_token: string;
+  expires_at: string;
+  hostname: string;
 }

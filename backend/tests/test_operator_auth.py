@@ -20,10 +20,15 @@ def _login(client, username="admin", password="secret-pw"):
 
 
 def _seed_operator(db_session, username="admin", password="secret-pw", role="ADMIN"):
-    """Seed an operator directly (first operator is created out-of-band by script)."""
+    """Seed an operator (get-or-create: safe to call repeatedly per test)."""
+    from sqlalchemy import select as _select
+
     from backend.app.core.security import hash_operator_password
     from backend.app.models import Operator
 
+    existing = db_session.scalar(_select(Operator).where(Operator.username == username))
+    if existing is not None:
+        return existing
     op = Operator(username=username, password_hash=hash_operator_password(password), role=role)
     db_session.add(op)
     db_session.commit()
