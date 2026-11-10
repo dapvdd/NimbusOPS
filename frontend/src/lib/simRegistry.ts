@@ -8,7 +8,27 @@ function read(): Registry {
   try {
     const data = JSON.parse(localStorage.getItem(KEY) ?? "null");
     if (!data || !Array.isArray(data.servers) || !Array.isArray(data.removed)) return { servers: [], removed: [] };
-    return { servers: data.servers.filter((s: SimServer) => typeof s.id === "string" && isSimulatedHostId(s.id) && typeof s.name === "string" && Number.isFinite(s.seed) && ["SIMULATED-DEV", "SIMULATED-STAGING", "SIMULATED-PROD"].includes(s.environment)), removed: data.removed.filter((s: SimRemovedEntry) => typeof s.id === "string" && isSimulatedHostId(s.id) && typeof s.name === "string" && typeof s.removed_at === "string") };
+    // Deduplicate by ID: React keys and removal must address exactly one host.
+    const seen = new Set<string>();
+    const unique = <T extends { id: string }>(entries: T[], valid: (entry: T) => boolean) =>
+      entries.filter((entry) => {
+        if (!valid(entry) || seen.has(entry.id)) return false;
+        seen.add(entry.id);
+        return true;
+      });
+    const servers = unique<SimServer>(data.servers, (s) =>
+      typeof s.id === "string" &&
+      isSimulatedHostId(s.id) &&
+      typeof s.name === "string" &&
+      Number.isFinite(s.seed) &&
+      ["SIMULATED-DEV", "SIMULATED-STAGING", "SIMULATED-PROD"].includes(s.environment),
+    );
+    seen.clear();
+    const removed = unique<SimRemovedEntry>(data.removed, (s) =>
+      typeof s.id === "string" &&
+      isSimulatedHostId(s.id) && typeof s.name === "string" && typeof s.removed_at === "string",
+    );
+    return { servers, removed };
   } catch { return { servers: [], removed: [] }; }
 }
 function save(data: Registry) {
