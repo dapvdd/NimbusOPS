@@ -10,7 +10,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import agents, applications, operators, public
+from .api import agents, applications, bootstrap_tokens, operators, public
 from .core.config import get_settings
 from .core.db import create_all, session_scope
 from .core.errors import install_error_handlers
@@ -65,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router)
     app.include_router(applications.router)
     app.include_router(operators.router)
+    app.include_router(bootstrap_tokens.router)
 
     return app
 

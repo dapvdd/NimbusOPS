@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     # Phase 3B: claim timeout for RUNNING operations (threat I4).
     op_claim_timeout_seconds: int = 600
 
+    # Phase 3B: default TTL for operator-issued bootstrap tokens (max 3600).
+    bootstrap_token_ttl_seconds: int = 600
+
 
 @lru_cache
 def get_settings() -> Settings:

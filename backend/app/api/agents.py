@@ -23,6 +23,7 @@ from ..schemas import (
     TelemetryResponse,
 )
 from ..services import deployments as deployments_service
+from ..services import enrollment as enrollment_service
 from ..services import hosts as host_service
 
 router = APIRouter(prefix="/api/v1/agents")
@@ -31,6 +32,15 @@ router = APIRouter(prefix="/api/v1/agents")
 @router.post("/enroll", response_model=EnrollResponse)
 def enroll(req: EnrollRequest, db: Session = Depends(get_db)) -> EnrollResponse:
     settings = get_settings()
+    if req.bootstrap_token:
+        # Phase 3B secure path: single-use, operator-issued, hostname-scoped.
+        token_row = enrollment_service.consume_bootstrap_token(db, req.bootstrap_token, req.hostname)
+        host, token = host_service.enroll_host(db, req, via_bootstrap=True)
+        # Backfill which host consumed the token (id known only after insert).
+        token_row.consumed_by = host.id
+        db.commit()
+        return EnrollResponse(host_id=host.id, agent_token=token)
+    # Legacy shared-token path (O5 transition; removed in Phase 4).
     if not settings.enrollment_token:
         host_service.record_enrollment_denied(db, req.hostname, "enrollment disabled (no token configured)")
         raise ApiError(
@@ -38,10 +48,10 @@ def enroll(req: EnrollRequest, db: Session = Depends(get_db)) -> EnrollResponse:
             ErrorCode.ENROLLMENT_DISABLED,
             "enrollment is disabled on this server",
         )
-    if not verify_enrollment_token(req.enrollment_token):
+    if not verify_enrollment_token(req.enrollment_token or ""):
         host_service.record_enrollment_denied(db, req.hostname, "invalid enrollment token")
         raise ApiError(401, ErrorCode.UNAUTHORIZED, "invalid enrollment token")
-    host, token = host_service.enroll_host(db, req)
+    host, token = host_service.enroll_host(db, req, via_bootstrap=False)
     return EnrollResponse(host_id=host.id, agent_token=token)
 
 

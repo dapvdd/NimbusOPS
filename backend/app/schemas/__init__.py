@@ -9,7 +9,11 @@ from pydantic import BaseModel, Field, field_validator
 # ---------------------------------------------------------------- agent API
 class EnrollRequest(BaseModel):
     hostname: str = Field(min_length=1, max_length=255)
-    enrollment_token: str = Field(min_length=1, max_length=1024)
+    # Legacy shared enrollment token (O5: accepted through the Phase 3B
+    # transition; removed in Phase 4).
+    enrollment_token: str | None = Field(default=None, min_length=1, max_length=1024)
+    # Phase 3B: single-use operator-issued bootstrap token (preferred path).
+    bootstrap_token: str | None = Field(default=None, min_length=1, max_length=1024)
     agent_version: str | None = Field(default=None, max_length=64)
     platform: str | None = Field(default=None, max_length=255)
     platform_release: str | None = Field(default=None, max_length=255)

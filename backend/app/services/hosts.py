@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ..core.codes import ErrorCode
 from ..core.errors import ApiError
 from ..core.security import generate_agent_token, hash_token, verify_agent_token
+from ..services.enrollment import record_host_event
 from ..core.config import get_settings
 from ..models import EnrollmentAudit, Host, Telemetry
 from ..schemas import EnrollRequest, HeartbeatRequest, TelemetryRequest
@@ -74,23 +75,38 @@ def require_status_context(db: Session) -> tuple[int, int]:
 # ------------------------------------------------------------- enrollment
 
 
-def enroll_host(db: Session, req: EnrollRequest) -> tuple[Host, str]:
+def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) -> tuple[Host, str]:
     """Create or re-enroll a host. Returns (host, plaintext_token_once).
 
-    Raises ApiError(409) if hostname exists unless this is a genuine
-    re-enrollment by an operator (Phase 1: re-enroll allowed, token rotated).
+    Phase 3B (threat T5): the legacy path never un-revokes — a REVOKED host
+    can only be restored through the operator bootstrap flow (via_bootstrap,
+    after consume_bootstrap_token validated a single-use operator-issued
+    token). Re-enroll of an existing non-revoked host via bootstrap rotates
+    the credential; via legacy token it is a plain credential rotation for
+    an already-ENROLLED host.
     """
-    from ..core.config import get_settings
-
-    settings = get_settings()
-
     existing = db.scalar(select(Host).where(Host.hostname == req.hostname))
     if existing is not None:
+        if existing.is_revoked and not via_bootstrap:
+            raise ApiError(
+                409,
+                ErrorCode.HOSTNAME_TAKEN,
+                "hostname belongs to a revoked host; operator re-enroll required",
+            )
         # Re-enrollment: rotate the token, keep host identity (id stable).
         token = generate_agent_token()
         existing.agent_token_hash = hash_token(token)
         existing.is_revoked = False
         existing.revoked_at = None
+        existing.enrollment_status = "ENROLLED"
+        existing.credential_version = (existing.credential_version or 1) + (1 if via_bootstrap else 0)
+        record_host_event(
+            db,
+            existing.id,
+            "RE_ENROLLED" if via_bootstrap else "CREDENTIAL_ROTATED",
+            actor="agent",
+            detail=f"hostname={req.hostname} via={'bootstrap' if via_bootstrap else 'legacy-token'}",
+        )
         db.add(
             EnrollmentAudit(
                 hostname=req.hostname,
@@ -99,7 +115,11 @@ def enroll_host(db: Session, req: EnrollRequest) -> tuple[Host, str]:
             )
         )
         db.commit()
-        logger.info("enrollment: re-enrolled host hostname=%s (token rotated)", req.hostname)
+        logger.info(
+            "enrollment: re-enrolled host hostname=%s via=%s (token rotated)",
+            req.hostname,
+            "bootstrap" if via_bootstrap else "legacy",
+        )
         return existing, token
 
     host = Host(
@@ -116,6 +136,13 @@ def enroll_host(db: Session, req: EnrollRequest) -> tuple[Host, str]:
         boot_time=req.boot_time,
     )
     db.add(host)
+    record_host_event(
+        db,
+        None,
+        "ENROLLED",
+        actor="agent",
+        detail=f"hostname={req.hostname} via={'bootstrap' if via_bootstrap else 'legacy-token'}",
+    )
     db.add(
         EnrollmentAudit(
             hostname=req.hostname,
