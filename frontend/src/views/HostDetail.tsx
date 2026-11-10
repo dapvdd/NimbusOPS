@@ -12,7 +12,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { ErrorPanel, LoadingPanel } from "../components/StatePanels";
 import { ageSeconds, formatAge, formatUtcTime } from "../lib/format";
 
-export default function HostDetail() {
+export default function HostDetail({ view = "overview" }: { view?: "overview" | "monitoring" } = {}) {
   const { hostId = "" } = useParams();
   const [host, setHost] = useState<Host | null>(null);
   const [history, setHistory] = useState<HostMetricsResponse | null>(null);
@@ -56,9 +56,11 @@ export default function HostDetail() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
-        <Link to="/" className="text-sm text-ink-400 hover:text-ink-200">
-          ← Overview
-        </Link>
+        {view === "overview" && (
+          <Link to="/" className="text-sm text-ink-400 hover:text-ink-200">
+            ← Overview
+          </Link>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold tracking-tight">{host.hostname}</h1>
@@ -86,29 +88,31 @@ export default function HostDetail() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <InfoPanel title="Host">
-          <InfoRow label="Host ID" value={<span className="font-mono text-xs">{host.id}</span>} />
-          <InfoRow label="Platform" value={host.platform ? `${host.platform} ${host.platform_release ?? ""}` : "—"} />
-          <InfoRow label="Agent version" value={host.agent_version ?? "—"} />
-          <InfoRow label="Total memory" value={host.total_memory_bytes ? `${(host.total_memory_bytes / 2 ** 30).toFixed(1)} GiB` : "—"} />
-        </InfoPanel>
-        <InfoPanel title="Connectivity">
-          <InfoRow label="Last heartbeat" value={seenAge !== null ? `${formatAge(seenAge)} (${formatUtcTime(host.last_seen_at)})` : "never"} />
-          <InfoRow label="Last telemetry" value={teleAge !== null ? `${formatAge(teleAge)} (${formatUtcTime(host.last_telemetry_at)})` : "never"} />
-          <InfoRow label="Enrolled at" value={formatUtcTime(host.enrolled_at)} />
-          <InfoRow
-            label="Agent status"
-            value={
-              host.status === "ONLINE"
-                ? "Reporting"
-                : host.status === "STALE"
-                  ? "Late — telemetry may be outdated"
-                  : "Not reporting"
-            }
-          />
-        </InfoPanel>
-      </div>
+      {view === "overview" && (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <InfoPanel title="Host">
+            <InfoRow label="Host ID" value={<span className="font-mono text-xs">{host.id}</span>} />
+            <InfoRow label="Platform" value={host.platform ? `${host.platform} ${host.platform_release ?? ""}` : "—"} />
+            <InfoRow label="Agent version" value={host.agent_version ?? "—"} />
+            <InfoRow label="Total memory" value={host.total_memory_bytes ? `${(host.total_memory_bytes / 2 ** 30).toFixed(1)} GiB` : "—"} />
+          </InfoPanel>
+          <InfoPanel title="Connectivity">
+            <InfoRow label="Last heartbeat" value={seenAge !== null ? `${formatAge(seenAge)} (${formatUtcTime(host.last_seen_at)})` : "never"} />
+            <InfoRow label="Last telemetry" value={teleAge !== null ? `${formatAge(teleAge)} (${formatUtcTime(host.last_telemetry_at)})` : "never"} />
+            <InfoRow label="Enrolled at" value={formatUtcTime(host.enrolled_at)} />
+            <InfoRow
+              label="Agent status"
+              value={
+                host.status === "ONLINE"
+                  ? "Reporting"
+                  : host.status === "STALE"
+                    ? "Late — telemetry may be outdated"
+                    : "Not reporting"
+              }
+            />
+          </InfoPanel>
+        </div>
+      )}
 
       <div>
         <h2 className="mb-2 text-sm font-medium text-ink-200">Recent telemetry</h2>

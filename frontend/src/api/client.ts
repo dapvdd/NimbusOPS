@@ -30,7 +30,46 @@ export class ApiFailure extends Error {
 
 const API_BASE = "/api/v1";
 
+/** Decode a path segment, returning null when the encoding is malformed. */
+function decodeSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Simulated identities are browser-local and must never reach the backend.
+ * Normalise case and percent-encoding so `sim%2D…` or `SIM-…` cannot slip
+ * past the check, and refuse malformed identifiers outright.
+ */
+function assertNotSimulated(path: string, init?: RequestInit): void {
+  const segments = path.split(/[/?]/).map(decodeSegment);
+  if (segments.some((segment) => segment === null)) {
+    throw new ApiFailure("http", "Invalid resource identifier.", 400);
+  }
+  let hostId: string | undefined;
+  if (typeof init?.body === "string") {
+    try {
+      hostId = (JSON.parse(init.body) as { host_id?: unknown }).host_id as string | undefined;
+    } catch {
+      // Non-JSON bodies cannot carry a simulated host identity.
+      hostId = undefined;
+    }
+  }
+  const decodedHost = typeof hostId === "string" ? decodeSegment(hostId) : undefined;
+  if (typeof hostId === "string" && decodedHost === null) {
+    throw new ApiFailure("http", "Invalid resource identifier.", 400);
+  }
+  const simulatedHost = decodedHost?.toLowerCase().startsWith("sim-");
+  if (segments.some((segment) => segment!.toLowerCase().startsWith("sim-")) || simulatedHost) {
+    throw new ApiFailure("http", "Simulated resources cannot access real infrastructure endpoints.", 400);
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  assertNotSimulated(path, init);
   let resp: Response;
   try {
     resp = await fetch(`${API_BASE}${path}`, {
