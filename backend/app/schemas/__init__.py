@@ -113,6 +113,9 @@ class HostOut(BaseModel):
     last_telemetry_at: datetime | None
     latest_metrics: LatestMetrics | None  # None => no telemetry yet (not zero)
     is_revoked: bool
+    # Phase 3B (§7.1): lifecycle state; REVOKED is canonical over is_revoked.
+    enrollment_status: Literal["PENDING", "ENROLLED", "ONLINE", "STALE", "OFFLINE", "REVOKED"]
+    docker_enabled: bool
 
 
 class HostListResponse(BaseModel):

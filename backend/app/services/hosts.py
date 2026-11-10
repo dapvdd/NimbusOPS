@@ -171,13 +171,32 @@ def _get_host_or_404(db: Session, host_id: str) -> Host:
 
 
 def authenticate_host(db: Session, host_id: str, token: str) -> Host:
-    """Resolve host and verify its agent token; raises typed errors."""
+    """Resolve host and verify its agent token; raises typed errors.
+
+    Phase 3B (Task 5): dual-hash grace window — the previous credential stays
+    valid until `previous_token_expires_at`, then only the current hash works.
+    """
     host = _get_host_or_404(db, host_id)
     if host.is_revoked:
-        raise ApiError(401, ErrorCode.UNAUTHORIZED, "agent credential revoked")
-    if not verify_agent_token(token, host.agent_token_hash):
-        raise ApiError(401, ErrorCode.UNAUTHORIZED, "invalid agent credential")
-    return host
+        raise ApiError(401, ErrorCode.HOST_REVOKED, "agent credential revoked")
+    if verify_agent_token(token, host.agent_token_hash):
+        # Current credential. A successful auth on a rotated host whose grace
+        # has expired clears the stale previous hash (lazy cleanup).
+        if host.previous_token_hash and host.previous_token_expires_at is not None:
+            if _as_utc(host.previous_token_expires_at) <= _utcnow():
+                host.previous_token_hash = None
+                host.previous_token_expires_at = None
+                db.commit()
+        return host
+    # Grace window for the previous credential.
+    if (
+        host.previous_token_hash
+        and host.previous_token_expires_at is not None
+        and _as_utc(host.previous_token_expires_at) > _utcnow()
+        and verify_agent_token(token, host.previous_token_hash)
+    ):
+        return host
+    raise ApiError(401, ErrorCode.UNAUTHORIZED, "invalid agent credential")
 
 
 def touch_heartbeat(db: Session, host: Host, req: HeartbeatRequest) -> datetime:

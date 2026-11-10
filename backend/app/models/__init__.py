@@ -36,6 +36,10 @@ class Host(Base):
     docker_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Phase 3B: bumped on operator-initiated credential rotation.
     credential_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Phase 3B (Task 5): rotation grace window — previous credential hash stays
+    # valid until this instant, then the dual-hash check drops it.
+    previous_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    previous_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Agent-reported metadata (heartbeat-refreshed).
     agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)

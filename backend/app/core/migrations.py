@@ -80,6 +80,9 @@ _NEW_HOST_COLUMNS = {
     "enrollment_status": ("VARCHAR(16)", "'ENROLLED'"),
     "docker_enabled": ("BOOLEAN", "0"),
     "credential_version": ("INTEGER", "1"),
+    # Task 5: rotation grace window (dual-hash check).
+    "previous_token_hash": ("VARCHAR(64)", None),
+    "previous_token_expires_at": ("TIMESTAMP", None),
 }
 
 _NEW_OP_COLUMNS = {
