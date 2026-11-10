@@ -58,5 +58,18 @@ def enrolled_host(client, enroll_token):
     return body["host_id"], body["agent_token"]
 
 
+@pytest.fixture()
+def db_session():
+    """Direct DB session for seeding/inspection (separate from TestClient requests)."""
+    from backend.app.core.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 def auth_headers(host_id: str, token: str) -> dict:
+    """Plain helper (NOT a fixture): legacy tests import and call this directly."""
     return {"X-Host-Id": host_id, "Authorization": f"Bearer {token}"}

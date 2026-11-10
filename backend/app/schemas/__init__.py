@@ -226,3 +226,25 @@ class CommandResultResponse(BaseModel):
     operation_id: str
     status: Literal["SUCCEEDED", "FAILED", "UNKNOWN"]
     accepted: bool
+
+
+# ------------------------------------------------------------------ Phase 3B
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class LoginResponse(BaseModel):
+    session_token: str
+    operator_id: str
+    role: Literal["ADMIN", "VIEWER"]
+    expires_at: datetime
+
+
+class MeResponse(BaseModel):
+    operator_id: str
+    username: str
+    role: Literal["ADMIN", "VIEWER"]
+

@@ -47,3 +47,34 @@ def verify_enrollment_token(presented: str) -> bool:
         # Enrollment disabled entirely; caller maps this to 503.
         return False
     return secrets.compare_digest(presented, settings.enrollment_token)
+
+
+# ------------------------------------------------------------------ Phase 3B
+
+_OPERATOR_KDF_ITERATIONS = 240_000  # PBKDF2-SHA256; real KDF for human passwords
+
+
+def hash_operator_password(password: str) -> str:
+    """PBKDF2-SHA256 for operator passwords (NOT the fast token hash —
+    passwords are human-chosen and need a KDF; docs/SECURITY.md limitation 4)."""
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _OPERATOR_KDF_ITERATIONS)
+    return f"pbkdf2${_OPERATOR_KDF_ITERATIONS}${salt.hex()}${dk.hex()}"
+
+
+def verify_operator_password(password: str, stored: str) -> bool:
+    """Constant-time PBKDF2 verification of the stored `pbkdf2$iter$salt$dk` string."""
+    try:
+        scheme, iterations, salt_hex, dk_hex = stored.split("$", 3)
+        if scheme != "pbkdf2":
+            return False
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), int(iterations))
+        return secrets.compare_digest(dk.hex(), dk_hex)
+    except (ValueError, TypeError):
+        return False
+
+
+def hash_session_token(token: str) -> str:
+    """Session/bootstrap tokens: same keyed-hash scheme as agent tokens
+    (256-bit random values, fast keyed hash is appropriate)."""
+    return hash_token(token)
