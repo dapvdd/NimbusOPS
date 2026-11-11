@@ -9,7 +9,11 @@ from pydantic import BaseModel, Field, field_validator
 # ---------------------------------------------------------------- agent API
 class EnrollRequest(BaseModel):
     hostname: str = Field(min_length=1, max_length=255)
-    enrollment_token: str = Field(min_length=1, max_length=1024)
+    # Legacy shared enrollment token (O5: accepted through the Phase 3B
+    # transition; removed in Phase 4).
+    enrollment_token: str | None = Field(default=None, min_length=1, max_length=1024)
+    # Phase 3B: single-use operator-issued bootstrap token (preferred path).
+    bootstrap_token: str | None = Field(default=None, min_length=1, max_length=1024)
     agent_version: str | None = Field(default=None, max_length=64)
     platform: str | None = Field(default=None, max_length=255)
     platform_release: str | None = Field(default=None, max_length=255)
@@ -37,6 +41,8 @@ class HeartbeatResponse(BaseModel):
     status: Literal["ONLINE", "STALE", "OFFLINE"]
     server_time: datetime
     heartbeat_interval_seconds: int
+    # Phase 3B (§7.2): agent refuses Docker ops when False.
+    docker_enabled: bool = False
 
 
 class TelemetryRequest(BaseModel):
@@ -109,6 +115,9 @@ class HostOut(BaseModel):
     last_telemetry_at: datetime | None
     latest_metrics: LatestMetrics | None  # None => no telemetry yet (not zero)
     is_revoked: bool
+    # Phase 3B (§7.1): lifecycle state; REVOKED is canonical over is_revoked.
+    enrollment_status: Literal["PENDING", "ENROLLED", "ONLINE", "STALE", "OFFLINE", "REVOKED"]
+    docker_enabled: bool
 
 
 class HostListResponse(BaseModel):
@@ -226,3 +235,25 @@ class CommandResultResponse(BaseModel):
     operation_id: str
     status: Literal["SUCCEEDED", "FAILED", "UNKNOWN"]
     accepted: bool
+
+
+# ------------------------------------------------------------------ Phase 3B
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class LoginResponse(BaseModel):
+    session_token: str
+    operator_id: str
+    role: Literal["ADMIN", "VIEWER"]
+    expires_at: datetime
+
+
+class MeResponse(BaseModel):
+    operator_id: str
+    username: str
+    role: Literal["ADMIN", "VIEWER"]
+

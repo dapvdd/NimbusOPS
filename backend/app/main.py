@@ -10,7 +10,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import agents, applications, public
+from .api import agents, applications, bootstrap_tokens, host_lifecycle, operators, public
 from .core.config import get_settings
 from .core.db import create_all, session_scope
 from .core.errors import install_error_handlers
@@ -25,12 +25,36 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     create_all()
+    # Phase 3B: bring the DB to the current shape (additive-only, idempotent).
+    from .core.migrations import upgrade_phase3b
+
+    upgrade_phase3b()
     # Seed the approved deployment-template catalog (idempotent).
     from .services.deployments import seed_templates
 
     with session_scope() as db:
         seed_templates(db)
-    yield
+
+    # Phase 3B (threat I4): periodic claim-timeout reconciler.
+    import asyncio
+
+    from .core.config import get_settings
+    from .services.deployments import reconcile_timed_out_ops
+
+    async def _reconcile_loop() -> None:
+        interval = max(30, min(300, get_settings().op_claim_timeout_seconds // 4))
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                reconcile_timed_out_ops()
+            except Exception:  # noqa: BLE001 — reconciler must never kill the app
+                logging.getLogger("nimbusops.recovery").exception("reconcile pass failed")
+
+    task = asyncio.create_task(_reconcile_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
 
 
 def create_app() -> FastAPI:
@@ -52,7 +76,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=raw_origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "Authorization", "X-Host-Id"],
     )
 
@@ -60,6 +84,9 @@ def create_app() -> FastAPI:
     app.include_router(public.router)
     app.include_router(agents.router)
     app.include_router(applications.router)
+    app.include_router(operators.router)
+    app.include_router(bootstrap_tokens.router)
+    app.include_router(host_lifecycle.router)
 
     return app
 

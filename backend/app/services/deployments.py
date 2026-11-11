@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ..core.codes import ErrorCode
+from ..core.config import get_settings
 from ..core.errors import ApiError
 from ..models import DeploymentOperation, DeploymentTemplate, Host, ManagedDeployment, OperationEvent
 from ..schemas import AgentCommand, DeployRequest, OperationOut
@@ -36,6 +37,49 @@ OP_TYPES = ("DEPLOY", "START", "STOP")
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def reconcile_timed_out_ops(db: Session | None = None, now: datetime | None = None) -> int:
+    """Re-queue RUNNING ops whose claim deadline (`timeout_at`) has passed.
+
+    Threat I4: an agent that claims a command and dies would otherwise wedge
+    the operation in RUNNING forever (blocking its deployment). The reconciler
+    releases the claim (status back to QUEUED, claim window cleared) so the
+    next poll re-delivers. Terminal ops are never touched; the sweep is
+    idempotent (a second run finds nothing).
+
+    Returns the number of re-queued operations. `now` is injectable for tests;
+    `db` defaults to a fresh session so the lifespan background task and the
+    pre-poll lazy call share one code path.
+    """
+    if db is None:
+        from ..core.db import session_scope
+
+        with session_scope() as owned:
+            return reconcile_timed_out_ops(owned, now)
+    now = now or _utcnow()
+    stale_ids = db.scalars(
+        select(DeploymentOperation.id).where(
+            DeploymentOperation.status == "RUNNING",
+            DeploymentOperation.timeout_at.is_not(None),
+            DeploymentOperation.timeout_at < now,
+        )
+    ).all()
+    if not stale_ids:
+        return 0
+    requeued = db.execute(
+        update(DeploymentOperation)
+        .where(
+            DeploymentOperation.id.in_(stale_ids),
+            DeploymentOperation.status == "RUNNING",
+        )
+        .values(status="QUEUED", claimed_at=None, timeout_at=None, updated_at=now)
+    )
+    for op_id in stale_ids:
+        db.add(OperationEvent(operation_id=op_id, event="REQUEUED_TIMEOUT", detail="claim timeout exceeded"))
+    db.commit()
+    logger.warning("recovery: re-queued %d timed-out operation(s)", requeued.rowcount)
+    return requeued.rowcount
 
 
 def _get_host_or_404(db: Session, host_id: str) -> Host:
@@ -227,20 +271,29 @@ def create_lifecycle_operation(db: Session, deployment_id: str, op_type: str) ->
 # --------------------------------------------------------- agent command API
 
 
-def poll_commands(db: Session, host_id: str, limit: int = 8) -> list[AgentCommand]:
+def poll_commands(db: Session, host_id: str, limit: int = 8, docker_enabled: bool = True) -> list[AgentCommand]:
     """Atomically claim QUEUED ops for this host: QUEUED -> RUNNING.
 
     A claimed op is delivered exactly once (claim is part of delivery);
     disconnected agents pick work up on their next poll. Terminal ops are
     never re-delivered.
+
+    Phase 3B: the reconciler runs first, so an op whose agent died mid-run
+    (past `timeout_at`) is back in QUEUED and claimable again. When
+    `docker_enabled` is False, DEPLOY ops are NOT claimed (§5.3): they remain
+    QUEUED until an operator enables Docker.
     """
     now = _utcnow()
-    queued_ids = db.scalars(
+    reconcile_timed_out_ops(db, now)
+    claim_query = (
         select(DeploymentOperation.id)
         .where(DeploymentOperation.host_id == host_id, DeploymentOperation.status == "QUEUED")
         .order_by(DeploymentOperation.created_at.asc())
         .limit(limit)
-    ).all()
+    )
+    if not docker_enabled:
+        claim_query = claim_query.where(DeploymentOperation.op_type != "DEPLOY")
+    queued_ids = db.scalars(claim_query).all()
     claimed: list[AgentCommand] = []
     for op_id in queued_ids:
         # Atomic claim: UPDATE ... WHERE status='QUEUED' guards against
@@ -248,7 +301,7 @@ def poll_commands(db: Session, host_id: str, limit: int = 8) -> list[AgentComman
         updated = db.execute(
             update(DeploymentOperation)
             .where(DeploymentOperation.id == op_id, DeploymentOperation.status == "QUEUED")
-            .values(status="RUNNING", claimed_at=now, updated_at=now)
+            .values(status="RUNNING", claimed_at=now, updated_at=now, timeout_at=now + timedelta(seconds=get_settings().op_claim_timeout_seconds))
         )
         if updated.rowcount == 1:
             db.add(OperationEvent(operation_id=op_id, event="CLAIMED", detail=f"host={host_id}"))

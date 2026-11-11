@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ..core.codes import ErrorCode
 from ..core.errors import ApiError
 from ..core.security import generate_agent_token, hash_token, verify_agent_token
+from ..services.enrollment import record_host_event
 from ..core.config import get_settings
 from ..models import EnrollmentAudit, Host, Telemetry
 from ..schemas import EnrollRequest, HeartbeatRequest, TelemetryRequest
@@ -74,23 +75,38 @@ def require_status_context(db: Session) -> tuple[int, int]:
 # ------------------------------------------------------------- enrollment
 
 
-def enroll_host(db: Session, req: EnrollRequest) -> tuple[Host, str]:
+def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) -> tuple[Host, str]:
     """Create or re-enroll a host. Returns (host, plaintext_token_once).
 
-    Raises ApiError(409) if hostname exists unless this is a genuine
-    re-enrollment by an operator (Phase 1: re-enroll allowed, token rotated).
+    Phase 3B (threat T5): the legacy path never un-revokes — a REVOKED host
+    can only be restored through the operator bootstrap flow (via_bootstrap,
+    after consume_bootstrap_token validated a single-use operator-issued
+    token). Re-enroll of an existing non-revoked host via bootstrap rotates
+    the credential; via legacy token it is a plain credential rotation for
+    an already-ENROLLED host.
     """
-    from ..core.config import get_settings
-
-    settings = get_settings()
-
     existing = db.scalar(select(Host).where(Host.hostname == req.hostname))
     if existing is not None:
+        if existing.is_revoked and not via_bootstrap:
+            raise ApiError(
+                409,
+                ErrorCode.HOSTNAME_TAKEN,
+                "hostname belongs to a revoked host; operator re-enroll required",
+            )
         # Re-enrollment: rotate the token, keep host identity (id stable).
         token = generate_agent_token()
         existing.agent_token_hash = hash_token(token)
         existing.is_revoked = False
         existing.revoked_at = None
+        existing.enrollment_status = "ENROLLED"
+        existing.credential_version = (existing.credential_version or 1) + (1 if via_bootstrap else 0)
+        record_host_event(
+            db,
+            existing.id,
+            "RE_ENROLLED" if via_bootstrap else "CREDENTIAL_ROTATED",
+            actor="agent",
+            detail=f"hostname={req.hostname} via={'bootstrap' if via_bootstrap else 'legacy-token'}",
+        )
         db.add(
             EnrollmentAudit(
                 hostname=req.hostname,
@@ -99,12 +115,19 @@ def enroll_host(db: Session, req: EnrollRequest) -> tuple[Host, str]:
             )
         )
         db.commit()
-        logger.info("enrollment: re-enrolled host hostname=%s (token rotated)", req.hostname)
+        logger.info(
+            "enrollment: re-enrolled host hostname=%s via=%s (token rotated)",
+            req.hostname,
+            "bootstrap" if via_bootstrap else "legacy",
+        )
         return existing, token
 
     host = Host(
         hostname=req.hostname,
         agent_token_hash=hash_token(token := generate_agent_token()),
+        enrollment_status="ENROLLED",
+        docker_enabled=False,
+        credential_version=1,
         agent_version=req.agent_version,
         platform=req.platform,
         platform_release=req.platform_release,
@@ -113,6 +136,13 @@ def enroll_host(db: Session, req: EnrollRequest) -> tuple[Host, str]:
         boot_time=req.boot_time,
     )
     db.add(host)
+    record_host_event(
+        db,
+        None,
+        "ENROLLED",
+        actor="agent",
+        detail=f"hostname={req.hostname} via={'bootstrap' if via_bootstrap else 'legacy-token'}",
+    )
     db.add(
         EnrollmentAudit(
             hostname=req.hostname,
@@ -141,13 +171,32 @@ def _get_host_or_404(db: Session, host_id: str) -> Host:
 
 
 def authenticate_host(db: Session, host_id: str, token: str) -> Host:
-    """Resolve host and verify its agent token; raises typed errors."""
+    """Resolve host and verify its agent token; raises typed errors.
+
+    Phase 3B (Task 5): dual-hash grace window — the previous credential stays
+    valid until `previous_token_expires_at`, then only the current hash works.
+    """
     host = _get_host_or_404(db, host_id)
     if host.is_revoked:
-        raise ApiError(401, ErrorCode.UNAUTHORIZED, "agent credential revoked")
-    if not verify_agent_token(token, host.agent_token_hash):
-        raise ApiError(401, ErrorCode.UNAUTHORIZED, "invalid agent credential")
-    return host
+        raise ApiError(401, ErrorCode.HOST_REVOKED, "agent credential revoked")
+    if verify_agent_token(token, host.agent_token_hash):
+        # Current credential. A successful auth on a rotated host whose grace
+        # has expired clears the stale previous hash (lazy cleanup).
+        if host.previous_token_hash and host.previous_token_expires_at is not None:
+            if _as_utc(host.previous_token_expires_at) <= _utcnow():
+                host.previous_token_hash = None
+                host.previous_token_expires_at = None
+                db.commit()
+        return host
+    # Grace window for the previous credential.
+    if (
+        host.previous_token_hash
+        and host.previous_token_expires_at is not None
+        and _as_utc(host.previous_token_expires_at) > _utcnow()
+        and verify_agent_token(token, host.previous_token_hash)
+    ):
+        return host
+    raise ApiError(401, ErrorCode.UNAUTHORIZED, "invalid agent credential")
 
 
 def touch_heartbeat(db: Session, host: Host, req: HeartbeatRequest) -> datetime:

@@ -34,6 +34,18 @@ class Settings(BaseSettings):
     # the enrollment token is used as pepper (see core/security.py).
     token_pepper: str = ""
 
+    # Phase 3B (O1 accepted): operator session TTL in seconds (default 12h).
+    operator_session_ttl_seconds: int = 43200
+
+    # Phase 3B (O4 accepted): grace period for rotated agent credentials.
+    credential_rotation_grace_seconds: int = 300
+
+    # Phase 3B: claim timeout for RUNNING operations (threat I4).
+    op_claim_timeout_seconds: int = 600
+
+    # Phase 3B: default TTL for operator-issued bootstrap tokens (max 3600).
+    bootstrap_token_ttl_seconds: int = 600
+
 
 @lru_cache
 def get_settings() -> Settings:
