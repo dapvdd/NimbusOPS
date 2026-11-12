@@ -204,6 +204,23 @@ class OperationOut(BaseModel):
     error_message: str | None = None
 
 
+class OperationListResponse(BaseModel):
+    operations: list[OperationOut]
+    count: int
+
+
+class OperationEventOut(BaseModel):
+    id: int
+    at: datetime
+    event: str
+    detail: str | None = None
+
+
+class OperationEventsResponse(BaseModel):
+    operation_id: str
+    events: list[OperationEventOut]
+
+
 class DeployResponse(BaseModel):
     operation_id: str
     deployment_id: str
