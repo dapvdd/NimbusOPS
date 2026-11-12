@@ -350,13 +350,13 @@ class DockerExecutor:
                 if "=" in pair:
                     k, _, v = pair.partition("=")
                     labels[k.strip()] = v.strip()
+            managed = labels.get("nimbusops.managed") == "true"
             containers.append({
                 "id": str(row.get("ID", ""))[:64],
                 "names": str(row.get("Names", ""))[:255],
                 "image": str(row.get("Image", ""))[:255],
                 "state": str(row.get("State", ""))[:32],
-                "managed": labels.get("nimbusops.managed") == "true"
-                or str(row.get("Labels", "")).find("nimbusops.managed=true") >= 0,
+                "managed": managed,
                 "deployment_id": labels.get("nimbusops.deployment"),
             })
         return {

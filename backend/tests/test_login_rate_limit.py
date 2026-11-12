@@ -84,3 +84,21 @@ def test_correct_credentials_after_limit_still_429(client):
     r = client.post("/api/v1/operators/login",
                     json={"username": "rl_admin", "password": "pw-rl"})
     assert r.status_code == 429
+
+
+def test_rate_limit_body_is_username_agnostic(client):
+    """429 body must not differ between known and unknown usernames
+    (no username-existence oracle via the limiter)."""
+    _seed_operator(client)
+    for _ in range(6):
+        client.post("/api/v1/operators/login",
+                    json={"username": "rl_admin", "password": "wrong"})
+    for _ in range(6):
+        client.post("/api/v1/operators/login",
+                    json={"username": "ghost-user", "password": "wrong"})
+    known = client.post("/api/v1/operators/login",
+                        json={"username": "rl_admin", "password": "wrong"})
+    unknown = client.post("/api/v1/operators/login",
+                          json={"username": "ghost-user", "password": "wrong"})
+    assert known.status_code == unknown.status_code == 429
+    assert known.json() == unknown.json()

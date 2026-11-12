@@ -59,7 +59,9 @@ def test_list_operations_all(client):
     body = r.json()
     assert body["count"] == 3
     ids = [o["id"] for o in body["operations"]]
-    assert ids == ["op-hist-a", "op-hist-b", "op-hist-c"]  # newest last (created ASC? pin stable order)
+    # Deterministic order: insertion (created ASC) — pinned so the UI can rely
+    # on oldest-first; the API is a bounded window, not a full audit dump.
+    assert ids == ["op-hist-a", "op-hist-b", "op-hist-c"]
 
 
 def test_list_operations_filter_status(client):

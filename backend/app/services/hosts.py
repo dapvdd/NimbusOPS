@@ -281,7 +281,12 @@ def list_hosts_paginated(
     """
     stmt = select(Host).order_by(Host.hostname)
     if hostname_q:
-        stmt = stmt.where(Host.hostname.ilike(f"%{hostname_q}%"))
+        # Escape LIKE wildcards: the filter is a literal substring match, not
+        # a pattern language (prevents wildcard injection / scan shaping).
+        escaped = (
+            hostname_q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        stmt = stmt.where(Host.hostname.ilike(f"%{escaped}%", escape="\\"))
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
         stmt.offset((page - 1) * page_size).limit(page_size)

@@ -101,4 +101,9 @@ def test_restart_op_claimed_by_agent_poll(client):
 
     with session_scope() as db:
         commands = dep_service.poll_commands(db, host_id, docker_enabled=True)
-    assert any(c.id == op_id and c.op_type == "RESTART" for c in commands), commands
+    match = [c for c in commands if c.id == op_id and c.op_type == "RESTART"]
+    assert match, commands
+    # Template rides on the claim so the agent knows which container to restart
+    # (same contract as START/STOP — guards against payload-less claims).
+    assert match[0].template is not None
+    assert match[0].template.get("container_name") == "nimbusops-nginx-rst"

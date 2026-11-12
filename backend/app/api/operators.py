@@ -36,6 +36,10 @@ router = APIRouter(prefix="/api/v1/operators")
 from collections import deque  # noqa: E402
 from threading import Lock  # noqa: E402
 
+# Bounded: at most _MAX_TRACKED_USERNAMES usernames tracked at once (the
+# window deques are small). Prevents unbounded memory growth from attackers
+# rotating unique usernames (review finding, Phase 6).
+_MAX_TRACKED_USERNAMES = 10_000
 _login_attempts: dict[str, deque[datetime]] = {}
 _login_lock = Lock()
 
@@ -46,10 +50,23 @@ def _check_login_rate(username: str) -> None:
     now = _now()
     window = timedelta(seconds=settings.login_rate_limit_window_seconds)
     with _login_lock:
+        if (
+            username not in _login_attempts
+            and len(_login_attempts) >= _MAX_TRACKED_USERNAMES
+        ):
+            # Evict expired entries wholesale; if still full, drop the oldest.
+            for key in list(_login_attempts.keys()):
+                dq = _login_attempts[key]
+                if not dq or now - dq[-1] > window:
+                    del _login_attempts[key]
+            while len(_login_attempts) >= _MAX_TRACKED_USERNAMES:
+                _login_attempts.pop(next(iter(_login_attempts)))
         attempts = _login_attempts.setdefault(username, deque())
         while attempts and now - attempts[0] > window:
             attempts.popleft()
         if len(attempts) >= settings.login_rate_limit_attempts:
+            # Generic body: identical for known/unknown usernames so the limit
+            # response is not a username-existence oracle (review finding).
             raise ApiError(429, ErrorCode.RATE_LIMITED,
                            "too many login attempts; retry later")
         attempts.append(now)

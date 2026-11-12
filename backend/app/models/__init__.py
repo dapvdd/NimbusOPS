@@ -142,7 +142,7 @@ class DeploymentOperation(Base):
         String(36), ForeignKey("managed_deployments.id", ondelete="CASCADE"), nullable=False, index=True
     )
     host_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    op_type: Mapped[str] = mapped_column(String(16), nullable=False)  # DEPLOY | START | STOP
+    op_type: Mapped[str] = mapped_column(String(16), nullable=False)  # DEPLOY | START | STOP | RESTART
     # QUEUED | RUNNING | SUCCEEDED | FAILED | UNKNOWN
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="QUEUED")
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

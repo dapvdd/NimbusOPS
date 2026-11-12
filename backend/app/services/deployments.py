@@ -32,7 +32,7 @@ logger = logging.getLogger("nimbusops.deployments")
 IN_FLIGHT = ("QUEUED", "RUNNING")
 TERMINAL = ("SUCCEEDED", "FAILED", "UNKNOWN")
 
-OP_TYPES = ("DEPLOY", "START", "STOP")
+OP_TYPES = ("DEPLOY", "START", "STOP", "RESTART")
 
 
 def _utcnow() -> datetime:
