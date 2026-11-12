@@ -49,6 +49,9 @@ class Host(Base):
     total_memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     boot_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Phase 4 (FR-19): deployment environment grouping metadata.
+    environment: Mapped[str] = mapped_column(String(16), nullable=False, default="PRIVATE")
+
     # Connectivity
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_telemetry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

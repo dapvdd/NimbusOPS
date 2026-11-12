@@ -20,6 +20,8 @@ class EnrollRequest(BaseModel):
     cpu_cores: int | None = Field(default=None, ge=1, le=4096)
     total_memory_bytes: int | None = Field(default=None, ge=0)
     boot_time: datetime | None = None
+    # Phase 4 (FR-19): optional environment metadata at enroll time.
+    environment: Literal["PRIVATE", "PUBLIC-CLOUD"] | None = None
 
 
 class EnrollResponse(BaseModel):
@@ -118,6 +120,8 @@ class HostOut(BaseModel):
     # Phase 3B (§7.1): lifecycle state; REVOKED is canonical over is_revoked.
     enrollment_status: Literal["PENDING", "ENROLLED", "ONLINE", "STALE", "OFFLINE", "REVOKED"]
     docker_enabled: bool
+    # Phase 4 (FR-19): environment grouping metadata.
+    environment: Literal["PRIVATE", "PUBLIC-CLOUD"]
 
 
 class PaginationMeta(BaseModel):

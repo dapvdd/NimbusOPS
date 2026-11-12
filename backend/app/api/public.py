@@ -56,6 +56,7 @@ def _to_host_out(host, latest: Telemetry | None) -> HostOut:
         is_revoked=host.is_revoked,
         enrollment_status=host.enrollment_status,
         docker_enabled=bool(host.docker_enabled),
+        environment=host.environment,
     )
 
 

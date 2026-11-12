@@ -83,6 +83,8 @@ _NEW_HOST_COLUMNS = {
     # Task 5: rotation grace window (dual-hash check).
     "previous_token_hash": ("VARCHAR(64)", None),
     "previous_token_expires_at": ("TIMESTAMP", None),
+    # Phase 4 (FR-19): environment grouping. Existing hosts are private.
+    "environment": ("VARCHAR(16)", "'PRIVATE'"),
 }
 
 _NEW_OP_COLUMNS = {

@@ -127,6 +127,7 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
         agent_token_hash=hash_token(token := generate_agent_token()),
         enrollment_status="ENROLLED",
         docker_enabled=False,
+        environment=getattr(req, "environment", None) or "PRIVATE",
         credential_version=1,
         agent_version=req.agent_version,
         platform=req.platform,
