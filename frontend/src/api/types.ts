@@ -34,6 +34,8 @@ export interface Host {
   /** Phase 3B lifecycle state; REVOKED is canonical over is_revoked. */
   enrollment_status: "PENDING" | "ENROLLED" | "ONLINE" | "STALE" | "OFFLINE" | "REVOKED";
   docker_enabled: boolean;
+  /** Phase 4 (FR-19): environment grouping metadata. */
+  environment: "PRIVATE" | "PUBLIC-CLOUD";
 }
 
 export interface HostListResponse {
