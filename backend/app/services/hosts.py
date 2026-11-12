@@ -267,6 +267,27 @@ def get_host_with_metrics(db: Session, host_id: str) -> tuple[Host, Telemetry | 
     return host, latest
 
 
+def list_hosts_paginated(
+    db: Session,
+    page: int = 1,
+    page_size: int = 50,
+    hostname_q: str | None = None,
+) -> tuple[list[Host], int]:
+    """FR-09: filtered + paginated host listing.
+
+    Returns (page_items, total_matching). Filter is a case-insensitive
+    hostname substring match; pagination is 1-based.
+    """
+    stmt = select(Host).order_by(Host.hostname)
+    if hostname_q:
+        stmt = stmt.where(Host.hostname.ilike(f"%{hostname_q}%"))
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.scalars(
+        stmt.offset((page - 1) * page_size).limit(page_size)
+    ).all()
+    return list(rows), int(total)
+
+
 def list_hosts(db: Session) -> list[Host]:
     return list(db.scalars(select(Host).order_by(Host.hostname)).all())
 

@@ -120,9 +120,18 @@ class HostOut(BaseModel):
     docker_enabled: bool
 
 
+class PaginationMeta(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
 class HostListResponse(BaseModel):
     hosts: list[HostOut]
     count: int
+    # Phase 4 (FR-09): present only when ?page/ is used (additive, optional).
+    pagination: PaginationMeta | None = None
 
 
 class HostMetricsResponse(BaseModel):

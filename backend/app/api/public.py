@@ -13,6 +13,7 @@ from ..schemas import (
     HostMetricsResponse,
     HostOut,
     MetricsPoint,
+    PaginationMeta,
 )
 from ..services import hosts as host_service
 from ..services.hosts import compute_status, require_status_context
@@ -77,15 +78,43 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
 
 
 @router.get("/hosts", response_model=HostListResponse)
-def list_hosts(db: Session = Depends(get_db)) -> HostListResponse:
-    hosts = host_service.list_hosts(db)
+def list_hosts(
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    hostname: str | None = Query(default=None, max_length=255),
+    db: Session = Depends(get_db),
+) -> HostListResponse:
+    if page is None and hostname is None:
+        # Legacy shape: full list, no pagination block.
+        hosts = host_service.list_hosts(db)
+        now = datetime.now(timezone.utc)
+        stale_s, offline_s = require_status_context(host_service)
+        items = []
+        for host in hosts:
+            latest = host_service.get_host_with_metrics(db, host.id)[1]
+            items.append(_to_host_out(host, latest))
+        return HostListResponse(hosts=items, count=len(items))
+
+    # Phase 4 (FR-09): paginated + filtered listing.
+    cur = page if page is not None else 1
+    rows, total = host_service.list_hosts_paginated(
+        db, page=cur, page_size=page_size, hostname_q=hostname)
     now = datetime.now(timezone.utc)
     stale_s, offline_s = require_status_context(host_service)
     items = []
-    for host in hosts:
+    for host in rows:
         latest = host_service.get_host_with_metrics(db, host.id)[1]
         items.append(_to_host_out(host, latest))
-    return HostListResponse(hosts=items, count=len(items))
+    return HostListResponse(
+        hosts=items,
+        count=total,
+        pagination=PaginationMeta(
+            page=cur,
+            page_size=page_size,
+            total=total,
+            total_pages=(total + page_size - 1) // page_size if total else 0,
+        ),
+    )
 
 
 @router.get("/hosts/{host_id}", response_model=HostOut)
