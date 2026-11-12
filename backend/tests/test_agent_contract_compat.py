@@ -5,21 +5,39 @@ additive-only extensions of the Phase 3B contract: every field the ORIGINAL
 (main-branch) client sends must still be accepted, and the agent must still
 parse the ORIGINAL server response shapes. Pins the compatibility claim in
 the final report with an executable check.
+
+The ORIGINAL baseline field sets are frozen below as literals (extracted
+from main @ 9902667, the Phase 4-6 merge point, using the same parser as
+_extract_schema_fields) so this test runs portably - including on GitHub
+Actions, where no second checkout of main exists.
 """
 
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
 from pathlib import Path
 
-REPO_MAIN = Path(r"C:\Users\user\Development\NimbusOPS")
 REPO_WT = Path(__file__).resolve().parents[2]
+
+# Frozen baseline field sets from the ORIGINAL (main-branch) schema.
+# Additive-only evolution: every name here must still exist in the branch
+# schema, and only the documented additions may appear.
+_BASELINE_HEARTBEAT_REQUEST = frozenset({
+    "agent_version", "platform", "platform_release",
+    "cpu_cores", "total_memory_bytes", "boot_time",
+})
+_BASELINE_HEARTBEAT_RESPONSE = frozenset({
+    "host_id", "status", "server_time",
+    "heartbeat_interval_seconds", "docker_enabled",
+})
+_BASELINE_ENROLL_REQUEST = frozenset({
+    "hostname", "enrollment_token", "bootstrap_token", "agent_version",
+    "platform", "platform_release", "cpu_cores", "total_memory_bytes",
+    "boot_time",
+})
 
 
 def _extract_schema_fields(repo: Path, rel: str, classname: str) -> set[str]:
-    """Grep the schema class body for `name:` field declarations (both repos)."""
+    """Grep the schema class body for `name:` field declarations."""
     src = (repo / rel).read_text(encoding="utf-8")
     lines = src.splitlines()
     out: set[str] = set()
@@ -40,7 +58,7 @@ def _extract_schema_fields(repo: Path, rel: str, classname: str) -> set[str]:
 
 
 def test_heartbeat_request_fields_are_additive_only():
-    old = _extract_schema_fields(REPO_MAIN, "backend/app/schemas/__init__.py", "HeartbeatRequest")
+    old = _BASELINE_HEARTBEAT_REQUEST
     new = _extract_schema_fields(REPO_WT, "backend/app/schemas/__init__.py", "HeartbeatRequest")
     assert old <= new, f"fields removed from HeartbeatRequest: {old - new}"
     extra = new - old
@@ -50,7 +68,7 @@ def test_heartbeat_request_fields_are_additive_only():
 
 
 def test_heartbeat_response_fields_are_additive_only():
-    old = _extract_schema_fields(REPO_MAIN, "backend/app/schemas/__init__.py", "HeartbeatResponse")
+    old = _BASELINE_HEARTBEAT_RESPONSE
     new = _extract_schema_fields(REPO_WT, "backend/app/schemas/__init__.py", "HeartbeatResponse")
     assert old <= new, f"fields removed from HeartbeatResponse: {old - new}"
     assert new - old == set(), "heartbeat response grew: agent parses by key, additions are server-side only"
@@ -93,7 +111,7 @@ def test_agent_client_ignores_unknown_heartbeat_response_fields():
 
 
 def test_enroll_request_fields_are_additive_only():
-    old = _extract_schema_fields(REPO_MAIN, "backend/app/schemas/__init__.py", "EnrollRequest")
+    old = _BASELINE_ENROLL_REQUEST
     new = _extract_schema_fields(REPO_WT, "backend/app/schemas/__init__.py", "EnrollRequest")
     assert old <= new, f"fields removed from EnrollRequest: {old - new}"
     assert new - old == {"environment"}
