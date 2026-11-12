@@ -34,6 +34,8 @@ export interface Host {
   /** Phase 3B lifecycle state; REVOKED is canonical over is_revoked. */
   enrollment_status: "PENDING" | "ENROLLED" | "ONLINE" | "STALE" | "OFFLINE" | "REVOKED";
   docker_enabled: boolean;
+  /** Phase 4 (FR-19): environment grouping metadata. */
+  environment: "PRIVATE" | "PUBLIC-CLOUD";
 }
 
 export interface HostListResponse {
@@ -69,7 +71,7 @@ export interface ApiErrorBody {
 // ---------------------------------------------------------------- Phase 2
 
 export type OperationStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "UNKNOWN";
-export type OpType = "DEPLOY" | "START" | "STOP";
+export type OpType = "DEPLOY" | "START" | "STOP" | "RESTART";
 export type ContainerState =
   | "CREATED"
   | "RUNNING"
@@ -105,6 +107,12 @@ export interface Operation {
   result: Record<string, unknown> | null;
   error_code: string | null;
   error_message: string | null;
+}
+
+/** Phase 5 (FR-08): operation history listing. */
+export interface OperationListResponse {
+  operations: Operation[];
+  count: number;
 }
 
 export interface DeployResponse {

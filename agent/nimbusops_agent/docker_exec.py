@@ -135,6 +135,10 @@ class DockerExecutor:
                 return self._start(template.get("container_name", ""), deployment_id, template.get("host_port"))
             if op_type == "STOP":
                 return self._stop(template.get("container_name", ""), deployment_id)
+            if op_type == "RESTART":
+                return self._restart(template.get("container_name", ""), deployment_id, template.get("host_port"))
+            if op_type == "INVENTORY":
+                return self._inventory()
             raise ManagedResourceError(f"op_type {op_type!r} is not approved")
         except DockerUnavailable as exc:
             return {
@@ -296,6 +300,76 @@ class DockerExecutor:
         }
 
     # ------------------------------------------------------------ probe
+
+    def _restart(self, name: str, deployment_id: str, host_port: int | None = None) -> dict[str, Any]:
+        """Phase 5: restart a managed container and verify it comes back."""
+        if not name.startswith(MANAGED_PREFIX):
+            raise ManagedResourceError(f"container name {name!r} outside managed prefix")
+        self.ensure_available()
+        code, _, err = self._run(["docker", "restart", name])
+        if code != 0:
+            return {
+                "status": "FAILED",
+                "error_code": "DOCKER_FAILURE",
+                "error_message": f"restart failed: {err.strip()[:300]}",
+            }
+        return self._verify_running(name, deployment_id, host_port)
+
+    def _inventory(self) -> dict[str, Any]:
+        """Phase 5 (FR-03): read-only docker inventory snapshot.
+
+        Fixed-argv `docker ps` with a JSON format; parse errors produce
+        UNKNOWN-style typed failures, never a crash. Read-only: no mutation
+        of any container.
+        """
+        import json as _json
+        from datetime import datetime, timezone
+
+        self.ensure_available()
+        code, out, err = self._run(
+            ["docker", "ps", "--all", "--format", "{{json .}}"], timeout=30.0
+        )
+        if code != 0:
+            return {
+                "status": "FAILED",
+                "error_code": "DOCKER_UNAVAILABLE" if code == 127 else "DOCKER_FAILURE",
+                "error_message": f"inventory ps failed: {err.strip()[:300]}",
+            }
+        containers: list[dict[str, Any]] = []
+        for line in out.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = _json.loads(line)
+            except ValueError:
+                continue  # skip malformed rows; never fabricate
+            labels_raw = row.get("Labels") or ""
+            labels: dict[str, str] = {}
+            for pair in labels_raw.split(","):
+                if "=" in pair:
+                    k, _, v = pair.partition("=")
+                    labels[k.strip()] = v.strip()
+            managed = labels.get("nimbusops.managed") == "true"
+            containers.append({
+                "id": str(row.get("ID", ""))[:64],
+                "names": str(row.get("Names", ""))[:255],
+                "image": str(row.get("Image", ""))[:255],
+                "state": str(row.get("State", ""))[:32],
+                "managed": managed,
+                "deployment_id": labels.get("nimbusops.deployment"),
+            })
+        return {
+            "status": "SUCCEEDED",
+            "result": {
+                "containers": containers,
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+
+    def inventory(self) -> dict[str, Any]:
+        """Public wrapper: read-only inventory snapshot."""
+        return self._inventory()
 
     def probe_http(self, port: int, timeout: float = 5.0) -> bool:
         """HTTP availability probe; False on any failure (never raises)."""

@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # Phase 3B: default TTL for operator-issued bootstrap tokens (max 3600).
     bootstrap_token_ttl_seconds: int = 600
 
+    # Phase 6: login rate limiting (per-username sliding window).
+    login_rate_limit_attempts: int = 5
+    login_rate_limit_window_seconds: int = 300
+
 
 @lru_cache
 def get_settings() -> Settings:

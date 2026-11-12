@@ -1,5 +1,6 @@
 """Agent API: enroll, heartbeat, telemetry — credential-gated."""
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header
@@ -27,6 +28,7 @@ from ..services import enrollment as enrollment_service
 from ..services import hosts as host_service
 
 router = APIRouter(prefix="/api/v1/agents")
+logger = logging.getLogger("nimbusops.agents-api")
 
 
 @router.post("/enroll", response_model=EnrollResponse)
@@ -86,6 +88,15 @@ def heartbeat(
     token = _agent_token(authorization)
     host = host_service.authenticate_host(db, x_host_id, token)
     now = host_service.touch_heartbeat(db, host, req)
+    # Phase 5 (FR-03): optional inventory snapshot (replace-on-report).
+    # Tolerated like the agent-side collector: a malformed/failing inventory
+    # payload must not fail the heartbeat cycle (heartbeat is already durable).
+    if req.inventory is not None:
+        try:
+            host_service.record_inventory(db, host.id, req.inventory)
+        except Exception:  # noqa: BLE001 — inventory never breaks monitoring
+            logger.exception("inventory ingest failed for host %s", host.id)
+            db.rollback()
     stale_s, offline_s = host_service.require_status_context(host_service)
     return HeartbeatResponse(
         host_id=host.id,

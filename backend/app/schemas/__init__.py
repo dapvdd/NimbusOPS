@@ -20,6 +20,8 @@ class EnrollRequest(BaseModel):
     cpu_cores: int | None = Field(default=None, ge=1, le=4096)
     total_memory_bytes: int | None = Field(default=None, ge=0)
     boot_time: datetime | None = None
+    # Phase 4 (FR-19): optional environment metadata at enroll time.
+    environment: Literal["PRIVATE", "PUBLIC-CLOUD"] | None = None
 
 
 class EnrollResponse(BaseModel):
@@ -34,6 +36,22 @@ class HeartbeatRequest(BaseModel):
     cpu_cores: int | None = Field(default=None, ge=1, le=4096)
     total_memory_bytes: int | None = Field(default=None, ge=0)
     boot_time: datetime | None = None
+    # Phase 5 (FR-03): optional docker inventory snapshot (replace-on-report).
+    inventory: "InventoryPayload | None" = None
+
+
+class InventoryContainer(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    names: str = Field(min_length=1, max_length=255)
+    image: str = Field(min_length=1, max_length=255)
+    state: str = Field(min_length=1, max_length=32)
+    managed: bool = False
+    deployment_id: str | None = Field(default=None, max_length=64)
+
+
+class InventoryPayload(BaseModel):
+    containers: list[InventoryContainer] = Field(max_length=500)
+    observed_at: datetime
 
 
 class HeartbeatResponse(BaseModel):
@@ -118,11 +136,22 @@ class HostOut(BaseModel):
     # Phase 3B (§7.1): lifecycle state; REVOKED is canonical over is_revoked.
     enrollment_status: Literal["PENDING", "ENROLLED", "ONLINE", "STALE", "OFFLINE", "REVOKED"]
     docker_enabled: bool
+    # Phase 4 (FR-19): environment grouping metadata.
+    environment: Literal["PRIVATE", "PUBLIC-CLOUD"]
+
+
+class PaginationMeta(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
 
 
 class HostListResponse(BaseModel):
     hosts: list[HostOut]
     count: int
+    # Phase 4 (FR-09): present only when ?page/ is used (additive, optional).
+    pagination: PaginationMeta | None = None
 
 
 class HostMetricsResponse(BaseModel):
@@ -165,7 +194,7 @@ class OperationOut(BaseModel):
     id: str
     deployment_id: str
     host_id: str
-    op_type: Literal["DEPLOY", "START", "STOP"]
+    op_type: Literal["DEPLOY", "START", "STOP", "RESTART"]
     status: Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"]
     created_at: datetime
     updated_at: datetime
@@ -173,6 +202,23 @@ class OperationOut(BaseModel):
     result: dict | None = None
     error_code: str | None = None
     error_message: str | None = None
+
+
+class OperationListResponse(BaseModel):
+    operations: list[OperationOut]
+    count: int
+
+
+class OperationEventOut(BaseModel):
+    id: int
+    at: datetime
+    event: str
+    detail: str | None = None
+
+
+class OperationEventsResponse(BaseModel):
+    operation_id: str
+    events: list[OperationEventOut]
 
 
 class DeployResponse(BaseModel):
@@ -184,6 +230,8 @@ class DeployResponse(BaseModel):
     container_name: str
     app_url: str | None = None
     deduplicated: bool = False
+    # Phase 5: op type echoed (RESTART/START/STOP/DEPLOY) for UI clarity.
+    op_type: Literal["DEPLOY", "START", "STOP", "RESTART"] = "DEPLOY"
 
 
 class ManagedAppOut(BaseModel):

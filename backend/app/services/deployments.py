@@ -32,7 +32,7 @@ logger = logging.getLogger("nimbusops.deployments")
 IN_FLIGHT = ("QUEUED", "RUNNING")
 TERMINAL = ("SUCCEEDED", "FAILED", "UNKNOWN")
 
-OP_TYPES = ("DEPLOY", "START", "STOP")
+OP_TYPES = ("DEPLOY", "START", "STOP", "RESTART")
 
 
 def _utcnow() -> datetime:
@@ -238,8 +238,8 @@ def create_deployment(db: Session, req: DeployRequest) -> tuple[ManagedDeploymen
 
 
 def create_lifecycle_operation(db: Session, deployment_id: str, op_type: str) -> tuple[ManagedDeployment, DeploymentOperation, bool]:
-    """Queue START or STOP for an existing deployment (same dedup rules)."""
-    if op_type not in ("START", "STOP"):
+    """Queue START, STOP, or RESTART for an existing deployment (same dedup rules)."""
+    if op_type not in ("START", "STOP", "RESTART"):
         raise ApiError(422, ErrorCode.INVALID_OPERATION, f"op_type {op_type!r} not permitted")
     dep = _get_deployment_or_404(db, deployment_id)
 

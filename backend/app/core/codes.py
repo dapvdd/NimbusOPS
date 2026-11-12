@@ -30,3 +30,5 @@ class ErrorCode(StrEnum):
     DOCKER_FAILURE = "DOCKER_FAILURE"
     TIMEOUT = "TIMEOUT"
     AGENT_UNREACHABLE = "AGENT_UNREACHABLE"
+    # Phase 5 (FR-03): inventory endpoints.
+    INVENTORY_NOT_FOUND = "INVENTORY_NOT_FOUND"

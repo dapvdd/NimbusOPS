@@ -25,6 +25,59 @@ from ..schemas import (
 router = APIRouter(prefix="/api/v1/operators")
 
 
+# -------------------------------------------------------------------------
+# Phase 6: login rate limiting — per-username sliding window (in-memory).
+#
+# Single-process control plane (uvicorn, one worker) makes in-memory state
+# sufficient; a multi-worker deployment would need shared state (documented
+# limitation in the release notes). Bounded memory: at most one deque per
+# username seen, pruned on access.
+# -------------------------------------------------------------------------
+from collections import deque  # noqa: E402
+from threading import Lock  # noqa: E402
+
+# Bounded: at most _MAX_TRACKED_USERNAMES usernames tracked at once (the
+# window deques are small). Prevents unbounded memory growth from attackers
+# rotating unique usernames (review finding, Phase 6).
+_MAX_TRACKED_USERNAMES = 10_000
+_login_attempts: dict[str, deque[datetime]] = {}
+_login_lock = Lock()
+
+
+def _check_login_rate(username: str) -> None:
+    """Raise 429 RATE_LIMITED when the username exceeded its attempt budget."""
+    settings = get_settings()
+    now = _now()
+    window = timedelta(seconds=settings.login_rate_limit_window_seconds)
+    with _login_lock:
+        if (
+            username not in _login_attempts
+            and len(_login_attempts) >= _MAX_TRACKED_USERNAMES
+        ):
+            # Evict expired entries wholesale; if still full, drop the oldest.
+            for key in list(_login_attempts.keys()):
+                dq = _login_attempts[key]
+                if not dq or now - dq[-1] > window:
+                    del _login_attempts[key]
+            while len(_login_attempts) >= _MAX_TRACKED_USERNAMES:
+                _login_attempts.pop(next(iter(_login_attempts)))
+        attempts = _login_attempts.setdefault(username, deque())
+        while attempts and now - attempts[0] > window:
+            attempts.popleft()
+        if len(attempts) >= settings.login_rate_limit_attempts:
+            # Generic body: identical for known/unknown usernames so the limit
+            # response is not a username-existence oracle (review finding).
+            raise ApiError(429, ErrorCode.RATE_LIMITED,
+                           "too many login attempts; retry later")
+        attempts.append(now)
+
+
+def _reset_login_rate(username: str) -> None:
+    """Clear the failure window after a successful login."""
+    with _login_lock:
+        _login_attempts.pop(username, None)
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -38,7 +91,7 @@ def _as_utc(dt: datetime) -> datetime:
 
 def _resolve_session(db: Session, token: str | None) -> tuple[Operator, OperatorSession]:
     """Validate a bearer session token; return (operator, session)."""
-    if not token:
+    if not token or not token.startswith("Bearer "):
         raise ApiError(401, ErrorCode.OPERATOR_AUTH_REQUIRED, "operator authentication required")
     token = token.removeprefix("Bearer ").strip()
     if not token:
@@ -72,10 +125,14 @@ def require_operator(role: str | None = None):
 
 @router.post("/login", response_model=LoginResponse)
 def login(req: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
+    # Phase 6: per-username sliding window BEFORE any credential work, so the
+    # limit applies to unknown usernames too (no enumeration, no brute force).
+    _check_login_rate(req.username)
     op = db.scalar(select(Operator).where(Operator.username == req.username))
     # Same generic message for unknown user and wrong password (no enumeration).
     if op is None or not verify_operator_password(req.password, op.password_hash):
         raise ApiError(401, ErrorCode.UNAUTHORIZED, "invalid credentials")
+    _reset_login_rate(req.username)
     settings = get_settings()
     token = generate_agent_token()  # 256-bit, url-safe (same entropy standard)
     now = _now()

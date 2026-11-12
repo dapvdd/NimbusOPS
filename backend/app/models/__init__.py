@@ -49,6 +49,9 @@ class Host(Base):
     total_memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     boot_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Phase 4 (FR-19): deployment environment grouping metadata.
+    environment: Mapped[str] = mapped_column(String(16), nullable=False, default="PRIVATE")
+
     # Connectivity
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_telemetry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -139,7 +142,7 @@ class DeploymentOperation(Base):
         String(36), ForeignKey("managed_deployments.id", ondelete="CASCADE"), nullable=False, index=True
     )
     host_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    op_type: Mapped[str] = mapped_column(String(16), nullable=False)  # DEPLOY | START | STOP
+    op_type: Mapped[str] = mapped_column(String(16), nullable=False)  # DEPLOY | START | STOP | RESTART
     # QUEUED | RUNNING | SUCCEEDED | FAILED | UNKNOWN
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="QUEUED")
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -232,3 +235,22 @@ class HostEvent(Base):
     event: Mapped[str] = mapped_column(String(32), nullable=False)
     actor: Mapped[str] = mapped_column(String(64), nullable=False)  # operator username or "agent"
     detail: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+
+class InventorySnapshot(Base):
+    """Phase 5 (FR-03): latest Docker inventory per host (replace-on-report).
+
+    One row per host (host_id unique): the agent's most recent read-only
+    `docker ps` snapshot. Rows are REPLACED, never appended, so the API
+    always reflects the newest observation with its own observed_at.
+    """
+
+    __tablename__ = "inventory_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    host_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("hosts.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    containers_json: Mapped[str] = mapped_column(String(65535), nullable=False, default="[]")

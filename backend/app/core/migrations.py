@@ -73,6 +73,16 @@ _NEW_TABLES = {
             detail VARCHAR(512)
         )
     """,
+    # Phase 5 (FR-03): latest docker inventory per host (replace-on-report).
+    "inventory_snapshots": """
+        CREATE TABLE IF NOT EXISTS inventory_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            host_id VARCHAR(36) NOT NULL UNIQUE,
+            observed_at TIMESTAMP NOT NULL,
+            received_at TIMESTAMP NOT NULL,
+            containers_json TEXT NOT NULL DEFAULT '[]'
+        )
+    """,
 }
 
 _NEW_HOST_COLUMNS = {
@@ -83,6 +93,8 @@ _NEW_HOST_COLUMNS = {
     # Task 5: rotation grace window (dual-hash check).
     "previous_token_hash": ("VARCHAR(64)", None),
     "previous_token_expires_at": ("TIMESTAMP", None),
+    # Phase 4 (FR-19): environment grouping. Existing hosts are private.
+    "environment": ("VARCHAR(16)", "'PRIVATE'"),
 }
 
 _NEW_OP_COLUMNS = {
@@ -93,6 +105,7 @@ _NEW_OP_COLUMNS = {
 _INDEXES = {
     "ix_bootstrap_tokens_hostname": "CREATE INDEX IF NOT EXISTS ix_bootstrap_tokens_hostname ON bootstrap_tokens (hostname)",
     "ix_host_events_host": "CREATE INDEX IF NOT EXISTS ix_host_events_host ON host_events (host_id, at)",
+    "ix_inventory_host": "CREATE UNIQUE INDEX IF NOT EXISTS ix_inventory_snapshots_host ON inventory_snapshots (host_id)",
 }
 
 

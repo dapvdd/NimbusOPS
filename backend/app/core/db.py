@@ -26,7 +26,9 @@ engine: Engine = create_engine(
     connect_args={"check_same_thread": False} if _database_url().startswith("sqlite") else {},
 )
 
-# Enforce FK integrity (off by default in SQLite) and a sane busy timeout.
+# Enforce FK integrity (off by default in SQLite), a sane busy timeout, and
+# WAL journaling (Phase 6: reader/writer concurrency; "database is locked"
+# becomes a bounded, retried event instead of a failed request).
 @event.listens_for(Engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, _connection_record) -> None:
     if engine.dialect.name != "sqlite":
@@ -34,6 +36,7 @@ def _set_sqlite_pragma(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA journal_mode=WAL")
     cursor.close()
 
 
