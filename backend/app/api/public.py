@@ -150,3 +150,21 @@ def get_host_metrics(
         ],
         count=len(rows),
     )
+
+
+@router.get("/hosts/{host_id}/inventory")
+def get_host_inventory(host_id: str, db: Session = Depends(get_db)) -> object:
+    """Phase 5 (FR-03): latest docker inventory snapshot for a host.
+
+    404 (structured INVENTORY_NOT_FOUND) when the host has never reported
+    inventory — stale data is never fabricated or labeled fresh.
+    """
+    from ..core.codes import ErrorCode
+    from ..core.errors import ApiError
+
+    snapshot = host_service.get_inventory(db, host_id)
+    if snapshot is None:
+        # Distinguish unknown host from host-without-inventory.
+        host_service._get_host_or_404(db, host_id)
+        raise ApiError(404, ErrorCode.INVENTORY_NOT_FOUND, "no inventory snapshot reported by this host")
+    return snapshot

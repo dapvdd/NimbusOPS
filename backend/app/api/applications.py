@@ -51,6 +51,7 @@ def _op_response(db: Session, dep, op, dedup: bool) -> DeployResponse:
         container_name=dep.container_name,
         app_url=svc.app_url_for(tmpl),
         deduplicated=dedup,
+        op_type=op.op_type,
     )
 
 
@@ -111,6 +112,19 @@ def stop_app(
     dep = svc._get_deployment_or_404(db, deployment_id)
     _require_docker_enabled(db, dep.host_id)
     dep, op_row, dedup = svc.create_lifecycle_operation(db, deployment_id, "STOP")
+    return _op_response(db, dep, op_row, dedup)
+
+
+@router.post("/applications/{deployment_id}/restart", response_model=DeployResponse, status_code=202)
+def restart_app(
+    deployment_id: str,
+    op: object = Depends(require_operator(role="ADMIN")),
+    db: Session = Depends(get_db),
+) -> DeployResponse:
+    """Phase 5: queue a RESTART for the deployment's managed container."""
+    dep = svc._get_deployment_or_404(db, deployment_id)
+    _require_docker_enabled(db, dep.host_id)
+    dep, op_row, dedup = svc.create_lifecycle_operation(db, deployment_id, "RESTART")
     return _op_response(db, dep, op_row, dedup)
 
 

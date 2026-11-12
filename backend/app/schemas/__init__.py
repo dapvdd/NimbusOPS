@@ -36,6 +36,22 @@ class HeartbeatRequest(BaseModel):
     cpu_cores: int | None = Field(default=None, ge=1, le=4096)
     total_memory_bytes: int | None = Field(default=None, ge=0)
     boot_time: datetime | None = None
+    # Phase 5 (FR-03): optional docker inventory snapshot (replace-on-report).
+    inventory: "InventoryPayload | None" = None
+
+
+class InventoryContainer(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    names: str = Field(min_length=1, max_length=255)
+    image: str = Field(min_length=1, max_length=255)
+    state: str = Field(min_length=1, max_length=32)
+    managed: bool = False
+    deployment_id: str | None = Field(default=None, max_length=64)
+
+
+class InventoryPayload(BaseModel):
+    containers: list[InventoryContainer] = Field(max_length=500)
+    observed_at: datetime
 
 
 class HeartbeatResponse(BaseModel):
@@ -178,7 +194,7 @@ class OperationOut(BaseModel):
     id: str
     deployment_id: str
     host_id: str
-    op_type: Literal["DEPLOY", "START", "STOP"]
+    op_type: Literal["DEPLOY", "START", "STOP", "RESTART"]
     status: Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"]
     created_at: datetime
     updated_at: datetime
@@ -197,6 +213,8 @@ class DeployResponse(BaseModel):
     container_name: str
     app_url: str | None = None
     deduplicated: bool = False
+    # Phase 5: op type echoed (RESTART/START/STOP/DEPLOY) for UI clarity.
+    op_type: Literal["DEPLOY", "START", "STOP", "RESTART"] = "DEPLOY"
 
 
 class ManagedAppOut(BaseModel):

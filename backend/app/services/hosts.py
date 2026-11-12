@@ -290,7 +290,51 @@ def list_hosts_paginated(
 
 
 def list_hosts(db: Session) -> list[Host]:
-    return list(db.scalars(select(Host).order_by(Host.hostname)).all())
+    return list(db.scalars(select(Host).order_by(Host.hostname)))
+
+
+def record_inventory(db: Session, host_id: str, payload) -> None:
+    """Phase 5 (FR-03): replace-on-report inventory snapshot for a host."""
+    import json as _json
+
+    from ..models import InventorySnapshot
+
+    row = db.scalar(select(InventorySnapshot).where(InventorySnapshot.host_id == host_id))
+    containers_json = _json.dumps(
+        [c.model_dump(mode="json") for c in payload.containers])
+    now = datetime.now(timezone.utc)
+    if row is None:
+        db.add(InventorySnapshot(
+            host_id=host_id,
+            observed_at=payload.observed_at,
+            received_at=now,
+            containers_json=containers_json,
+        ))
+    else:
+        row.observed_at = payload.observed_at
+        row.received_at = now
+        row.containers_json = containers_json
+    db.commit()
+
+
+def get_inventory(db: Session, host_id: str) -> dict | None:
+    """Return the latest inventory snapshot dict, or None when absent."""
+    import json as _json
+
+    from ..models import InventorySnapshot
+
+    row = db.scalar(select(InventorySnapshot).where(InventorySnapshot.host_id == host_id))
+    if row is None:
+        return None
+    now = _utcnow()
+    observed = _as_utc(row.observed_at)
+    return {
+        "host_id": row.host_id,
+        "containers": _json.loads(row.containers_json),
+        "observed_at": row.observed_at,
+        "received_at": row.received_at,
+        "age_seconds": max(0, int((now - observed).total_seconds())) if observed else None,
+    }
 
 
 def list_metrics(

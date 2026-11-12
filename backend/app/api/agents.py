@@ -86,6 +86,9 @@ def heartbeat(
     token = _agent_token(authorization)
     host = host_service.authenticate_host(db, x_host_id, token)
     now = host_service.touch_heartbeat(db, host, req)
+    # Phase 5 (FR-03): optional inventory snapshot (replace-on-report).
+    if req.inventory is not None:
+        host_service.record_inventory(db, host.id, req.inventory)
     stale_s, offline_s = host_service.require_status_context(host_service)
     return HeartbeatResponse(
         host_id=host.id,

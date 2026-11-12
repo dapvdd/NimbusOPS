@@ -73,6 +73,15 @@ def ensure_enrolled(cfg: Config) -> tuple[Identity, bool]:
 def run_cycle(sender: Sender, worker: CommandWorker | None = None) -> tuple[bool, str]:
     """One heartbeat + telemetry (+ command poll) cycle. Returns (ok, detail)."""
     info = host_info_snapshot()
+    # Phase 5 (FR-03): attach a read-only docker inventory snapshot when Docker
+    # is available; heartbeat stays inventory-less when it is not (additive).
+    try:
+        from .docker_exec import DockerExecutor
+        inv = DockerExecutor().inventory()
+        if inv.get("status") == "SUCCEEDED":
+            info["inventory"] = inv["result"]
+    except Exception as exc:  # inventory never breaks the monitoring loop
+        logger.debug("inventory unavailable: %s", exc)
     ok_hb, detail_hb = sender.send_heartbeat(info)
     telemetry = collect_telemetry()
     ok_t, detail_t = sender.send_telemetry(telemetry)

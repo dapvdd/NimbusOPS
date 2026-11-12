@@ -235,3 +235,22 @@ class HostEvent(Base):
     event: Mapped[str] = mapped_column(String(32), nullable=False)
     actor: Mapped[str] = mapped_column(String(64), nullable=False)  # operator username or "agent"
     detail: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+
+class InventorySnapshot(Base):
+    """Phase 5 (FR-03): latest Docker inventory per host (replace-on-report).
+
+    One row per host (host_id unique): the agent's most recent read-only
+    `docker ps` snapshot. Rows are REPLACED, never appended, so the API
+    always reflects the newest observation with its own observed_at.
+    """
+
+    __tablename__ = "inventory_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    host_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("hosts.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    containers_json: Mapped[str] = mapped_column(String(65535), nullable=False, default="[]")
