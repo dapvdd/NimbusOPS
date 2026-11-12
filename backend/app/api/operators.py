@@ -38,7 +38,7 @@ def _as_utc(dt: datetime) -> datetime:
 
 def _resolve_session(db: Session, token: str | None) -> tuple[Operator, OperatorSession]:
     """Validate a bearer session token; return (operator, session)."""
-    if not token:
+    if not token or not token.startswith("Bearer "):
         raise ApiError(401, ErrorCode.OPERATOR_AUTH_REQUIRED, "operator authentication required")
     token = token.removeprefix("Bearer ").strip()
     if not token:
