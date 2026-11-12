@@ -95,17 +95,39 @@ a release blocker.
 - Simulated host ids (`sim-*`) rejected server-side at every agent endpoint
   and at enrollment.
 
-## 8. Residual risks (explicit, accepted for v1)
+## 8. Independent final review (fresh-context, this branch)
+
+A fresh-context reviewer examined all branch commits (verdict:
+APPROVE-WITH-NITS — 0 Critical, 6 Important, 18 Minor/Nit). Remediations
+committed as `e68e12d`:
+
+| Finding | Disposition |
+| --- | --- |
+| Hostname filter injects LIKE wildcards (`%`, `_`) | **FIXED** — wildcard escaping + explicit escape clause; filter remains literal-substring |
+| Rate-limiter dict unbounded via unique usernames (memory DoS) | **FIXED** — bounded to 10k tracked usernames with expired-entry eviction |
+| 429 vs 401 distinction = username-existence oracle | **MITIGATED** — identical generic 429 body for known/unknown usernames (pinned by test); residual timing signal documented below |
+| Inventory ingest failure → 500 on heartbeat despite durable heartbeat | **FIXED** — tolerated like agent-side collector; logged, heartbeat succeeds |
+| Unauthenticated reads expose container names/images/errors | **ACCEPTED (R1)** — trusted-local threat model; gate reads behind operator auth before any non-loopback deployment (upgrade action v1.1) |
+| list_operations lacks offset/pagination | **ACCEPTED** — bounded window (≤500) is the v1 contract; cursor pagination queued for v1.1 |
+| Username-keyed limiter bypassable by rotation; per-process only | **ACCEPTED (R2)** — single-worker deployment requirement; per-IP/global bucket queued for v1.1 |
+
+Minor/Nit findings (stale constants/comments, redundant label check, test
+robustness, Activity race/pagination) — fixed where mechanical (OP_TYPES,
+model comment, labels dup, unresolved test comment, restart template pin);
+remainder recorded as tracked cleanups in the release candidate doc.
+
+## 9. Residual risks (explicit, accepted for v1)
 
 | # | Risk | Mitigation | Severity |
 | --- | --- | --- | --- |
 | R1 | Public reads (trusted-local model) | Deploy behind network boundary; operator-authenticated reads deferred | Medium |
-| R2 | In-memory rate limiter is per-process | Run single worker; or move to shared store in v1.1 | Low |
+| R2 | In-memory rate limiter is per-process, username-keyed | Run single worker; per-IP/global bucket in v1.1 | Low |
 | R3 | Dev-chain npm advisories | Upgrade vitest/vite/react-router majors post-release | Low (prod impact: none found) |
 | R4 | No TLS termination built in | Terminate TLS at reverse proxy; agent supports https URLs | Medium (ops) |
 | R5 | Legacy shared-token path exists | Leave `NIMBUSOPS_ENROLLMENT_TOKEN` empty in production | Low |
+| R6 | Limiter timing signal (429 vs 401 latency) | Generic bodies pinned equal; timing hardening deferred | Low |
 
-## 9. Verdict
+## 10. Verdict
 
 **No Critical or Important findings remain open in the shipped code.** The
 release candidate may proceed to controlled deployment behind a network
