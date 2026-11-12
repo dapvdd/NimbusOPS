@@ -267,3 +267,5 @@ Thumbs.db
 
 # Superpowers SDD session scratch
 .superpowers/
+
+.worktrees/
