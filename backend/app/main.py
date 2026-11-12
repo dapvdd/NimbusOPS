@@ -80,6 +80,20 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "Authorization", "X-Host-Id"],
     )
 
+    # Phase 6: security headers on every response (middleware, so errors and
+    # docs are covered too). CSP is scoped tightly enough for the API + the
+    # self-hosted Swagger docs.
+    @app.middleware("http")
+    async def _security_headers(request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+        )
+        return response
+
     install_error_handlers(app)
     app.include_router(public.router)
     app.include_router(agents.router)
