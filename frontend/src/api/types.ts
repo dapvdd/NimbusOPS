@@ -71,7 +71,7 @@ export interface ApiErrorBody {
 // ---------------------------------------------------------------- Phase 2
 
 export type OperationStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "UNKNOWN";
-export type OpType = "DEPLOY" | "START" | "STOP";
+export type OpType = "DEPLOY" | "START" | "STOP" | "RESTART";
 export type ContainerState =
   | "CREATED"
   | "RUNNING"
@@ -107,6 +107,12 @@ export interface Operation {
   result: Record<string, unknown> | null;
   error_code: string | null;
   error_message: string | null;
+}
+
+/** Phase 5 (FR-08): operation history listing. */
+export interface OperationListResponse {
+  operations: Operation[];
+  count: number;
 }
 
 export interface DeployResponse {

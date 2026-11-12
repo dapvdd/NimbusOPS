@@ -17,6 +17,7 @@ import type {
   ManagedAppListResponse,
   MeResponse,
   Operation,
+  OperationListResponse,
   ReenrollResponse,
   RotateCredentialResponse,
   TemplateListResponse,
@@ -140,6 +141,15 @@ export const api = {
     request<DeployResponse>(`/applications/${encodeURIComponent(deploymentId)}/stop`, { method: "POST" }),
   getOperation: (operationId: string) =>
     request<Operation>(`/operations/${encodeURIComponent(operationId)}`),
+  // Phase 5 (FR-08): operation history with filters.
+  listOperations: (filters: { host_id?: string; status?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (filters.host_id) params.set("host_id", filters.host_id);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.limit) params.set("limit", String(filters.limit));
+    const qs = params.toString();
+    return request<OperationListResponse>(`/operations${qs ? `?${qs}` : ""}`);
+  },
   getContainerState: (deploymentId: string) =>
     request<ContainerStateResponse>(`/applications/${encodeURIComponent(deploymentId)}/container-state`),
 
