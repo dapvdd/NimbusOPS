@@ -170,3 +170,17 @@ def test_ensure_enrolled_uses_bootstrap_token(tmp_path, monkeypatch):
     identity, created = ensure_enrolled(cfg)
     assert created is True
     assert identity.host_id == "h-boot"
+
+
+# ------------------------------------------------ RC2 F09 module entrypoint
+
+def test_python_m_nimbusops_agent_runs_main(monkeypatch):
+    """`python -m nimbusops_agent` must be a real supported entrypoint."""
+    import runpy
+
+    import nimbusops_agent.main as agent_main_module
+
+    monkeypatch.setattr(agent_main_module, "main", lambda argv=None: 0)
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_module("nimbusops_agent", run_name="__main__")
+    assert exc.value.code == 0

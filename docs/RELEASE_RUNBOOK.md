@@ -49,20 +49,34 @@ deployment (the dev server proxies are for development only).
 ## 4. Agent (on each managed host)
 
 ```bash
-# Linux host example
+# Linux host example (install the agent from this repository)
 python3 -m pip install psutil httpx
-# Bootstrap enrollment: operator issues a single-use token in the UI
-# (Operators view -> issue bootstrap token), then:
-NIMBUSOPS_SERVER_URL=http://<control-plane-host>:8000 \
-NIMBUSOPS_ENROLLMENT_TOKEN=<bootstrap token> \
-python -m nimbusops_agent
+python3 -m pip install ./agent        # provides the `nimbusops-agent` CLI
+
+# Bootstrap enrollment: an operator issues a single-use token in the UI
+# (Hosts view -> issue bootstrap token). The token is a secret: pass it via a
+# file or the environment, never on the command line.
+printf '%s' '<bootstrap token>' > ~/.nimbusops/bootstrap.token
+chmod 600 ~/.nimbusops/bootstrap.token
+NIMBUSOPS_AGENT_SERVER_URL=http://<control-plane-host>:8000 \
+python3 -m nimbusops_agent --bootstrap-token-file ~/.nimbusops/bootstrap.token
 ```
 
-- Identity is persisted to `~/.nimbusops/agent.json` (mode 0600) on first enroll;
-  subsequent runs reuse it. `NIMBUSOPS_INTERVAL` is seconds (5–3600).
+- Environment names are `NIMBUSOPS_AGENT_SERVER_URL`,
+  `NIMBUSOPS_AGENT_BOOTSTRAP_TOKEN` (or `--bootstrap-token-file`),
+  `NIMBUSOPS_AGENT_INTERVAL`, and `NIMBUSOPS_AGENT_STATE_FILE`. The legacy
+  shared secret is `NIMBUSOPS_AGENT_ENROLLMENT_TOKEN` and is only for
+  `NIMBUSOPS_ENROLLMENT_MODE=legacy` on the server.
+- The entrypoint is `python -m nimbusops_agent` or the `nimbusops-agent`
+  console script; both run `nimbusops_agent.main:main`.
+- Identity is persisted to `~/.nimbusops/agent.json` (atomic replace, mode 0600
+  on POSIX) on first enroll; subsequent runs reuse it with no secret.
+  `NIMBUSOPS_AGENT_INTERVAL` is seconds (5–3600).
 - The agent heartbeats, sends telemetry, polls for allowlisted operations
-  (DEPLOY/START/STOP/RESTART/INVENTORY), and reports results. It refuses
-  Docker work unless the server says `docker_enabled=true` (server-side gate).
+  (DEPLOY/START/STOP/RESTART/INVENTORY), and reports results. It refuses every
+  Docker operation when the server says `docker_enabled=false`, and requires
+  matching `nimbusops.managed`/`nimbusops.deployment` labels before mutating a
+  container.
 
 ## 5. First operator
 
