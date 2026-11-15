@@ -19,6 +19,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core.codes import ErrorCode
@@ -187,54 +188,103 @@ def _op_out(op: DeploymentOperation) -> OperationOut:
 def create_deployment(db: Session, req: DeployRequest) -> tuple[ManagedDeployment, DeploymentOperation, bool]:
     """Create (or reuse) the (host, template) deployment; return (dep, op, dedup).
 
-    Duplicate protection: an in-flight (QUEUED/RUNNING) operation for the same
-    deployment is returned as-is instead of creating a duplicate.
+    Duplicate protection is enforced by the database as well as by this
+    read-then-write path: ``managed_deployments`` is unique per (host,
+    template) and ``ux_ops_inflight_deployment`` allows at most one
+    QUEUED/RUNNING op per deployment. A losing concurrent request therefore
+    receives the winner's deployment/operation (RC2 F07) instead of a 500 or a
+    duplicate operation.
     """
     host = _get_host_or_404(db, req.host_id)
     tmpl = _get_template_or_422(db, req.template_key)
 
-    dep = db.scalar(
-        select(ManagedDeployment).where(
-            ManagedDeployment.host_id == host.id,
-            ManagedDeployment.template_key == tmpl.key,
-        )
-    )
-    if dep is None:
-        dep = ManagedDeployment(
-            host_id=host.id,
-            template_key=tmpl.key,
-            container_name=_container_name(host, tmpl),
-        )
-        db.add(dep)
-        db.flush()
+    for attempt in range(2):
+        try:
+            dep = db.scalar(
+                select(ManagedDeployment).where(
+                    ManagedDeployment.host_id == host.id,
+                    ManagedDeployment.template_key == tmpl.key,
+                )
+            )
+            if dep is None:
+                dep = ManagedDeployment(
+                    host_id=host.id,
+                    template_key=tmpl.key,
+                    container_name=_container_name(host, tmpl),
+                )
+                db.add(dep)
+                db.flush()
 
-    inflight = db.scalar(
+            inflight = _find_inflight(db, dep.id)
+            if inflight is not None:
+                db.commit()
+                return dep, inflight, True
+
+            op = DeploymentOperation(
+                deployment_id=dep.id,
+                host_id=host.id,
+                op_type="DEPLOY",
+                status="QUEUED",
+            )
+            db.add(op)
+            db.flush()
+            db.add(
+                OperationEvent(
+                    operation_id=op.id, event="CREATED", detail=f"template={tmpl.key} host={host.hostname}"
+                )
+            )
+            db.commit()
+            return dep, op, False
+        except IntegrityError:
+            # A concurrent writer won the unique constraint. Discard our
+            # attempt and read the winner's state on the next pass.
+            db.rollback()
+            if attempt == 0:
+                continue
+            return _resolve_concurrent_conflict(db, host_id=host.id, template_key=tmpl.key)
+
+    raise AssertionError("unreachable")
+
+
+def _find_inflight(db: Session, deployment_id: str) -> DeploymentOperation | None:
+    return db.scalar(
         select(DeploymentOperation)
         .where(
-            DeploymentOperation.deployment_id == dep.id,
+            DeploymentOperation.deployment_id == deployment_id,
             DeploymentOperation.status.in_(IN_FLIGHT),
         )
         .order_by(DeploymentOperation.created_at.desc())
         .limit(1)
     )
-    if inflight is not None:
-        return dep, inflight, True
 
-    op = DeploymentOperation(
-        deployment_id=dep.id,
-        host_id=host.id,
-        op_type="DEPLOY",
-        status="QUEUED",
-    )
-    db.add(op)
-    db.flush()
-    db.add(
-        OperationEvent(
-            operation_id=op.id, event="CREATED", detail=f"template={tmpl.key} host={host.hostname}"
+
+def _resolve_concurrent_conflict(
+    db: Session, *, host_id: str, template_key: str
+) -> tuple[ManagedDeployment, DeploymentOperation, bool]:
+    """Return the concurrent winner's deployment/operation.
+
+    Reached only when both attempts lost a unique-constraint race, which means
+    another request did commit; never invent a new operation here.
+    """
+    dep = db.scalar(
+        select(ManagedDeployment).where(
+            ManagedDeployment.host_id == host_id,
+            ManagedDeployment.template_key == template_key,
         )
     )
-    db.commit()
-    return dep, op, False
+    if dep is None:
+        raise ApiError(409, ErrorCode.INTERNAL, "concurrent deployment creation failed; retry")
+    op = _find_inflight(db, dep.id)
+    if op is None:
+        op = db.scalar(
+            select(DeploymentOperation)
+            .where(DeploymentOperation.deployment_id == dep.id)
+            .order_by(DeploymentOperation.created_at.desc(), DeploymentOperation.id.desc())
+            .limit(1)
+        )
+    if op is None:
+        raise ApiError(409, ErrorCode.INTERNAL, "concurrent operation creation failed; retry")
+    return dep, op, True
 
 
 def create_lifecycle_operation(db: Session, deployment_id: str, op_type: str) -> tuple[ManagedDeployment, DeploymentOperation, bool]:
@@ -243,29 +293,34 @@ def create_lifecycle_operation(db: Session, deployment_id: str, op_type: str) ->
         raise ApiError(422, ErrorCode.INVALID_OPERATION, f"op_type {op_type!r} not permitted")
     dep = _get_deployment_or_404(db, deployment_id)
 
-    inflight = db.scalar(
-        select(DeploymentOperation)
-        .where(
-            DeploymentOperation.deployment_id == dep.id,
-            DeploymentOperation.status.in_(IN_FLIGHT),
-        )
-        .order_by(DeploymentOperation.created_at.desc())
-        .limit(1)
-    )
-    if inflight is not None:
-        return dep, inflight, True
+    for attempt in range(2):
+        try:
+            inflight = _find_inflight(db, dep.id)
+            if inflight is not None:
+                db.commit()
+                return dep, inflight, True
 
-    op = DeploymentOperation(
-        deployment_id=dep.id,
-        host_id=dep.host_id,
-        op_type=op_type,
-        status="QUEUED",
-    )
-    db.add(op)
-    db.flush()
-    db.add(OperationEvent(operation_id=op.id, event="CREATED", detail=f"deployment={dep.id}"))
-    db.commit()
-    return dep, op, False
+            op = DeploymentOperation(
+                deployment_id=dep.id,
+                host_id=dep.host_id,
+                op_type=op_type,
+                status="QUEUED",
+            )
+            db.add(op)
+            db.flush()
+            db.add(OperationEvent(operation_id=op.id, event="CREATED", detail=f"deployment={dep.id}"))
+            db.commit()
+            return dep, op, False
+        except IntegrityError:
+            db.rollback()
+            if attempt == 0:
+                continue
+            winner = _find_inflight(db, dep.id)
+            if winner is not None:
+                return dep, winner, True
+            raise ApiError(409, ErrorCode.INTERNAL, "concurrent operation creation failed; retry")
+
+    raise AssertionError("unreachable")
 
 
 # --------------------------------------------------------- agent command API
@@ -285,14 +340,18 @@ def poll_commands(db: Session, host_id: str, limit: int = 8, docker_enabled: boo
     """
     now = _utcnow()
     reconcile_timed_out_ops(db, now)
+    if not docker_enabled:
+        # RC2 F04: every operation type here mutates a Docker resource. A
+        # disabled host claims nothing; queued work stays QUEUED (not lost)
+        # until an operator re-enables Docker. In-flight RUNNING work is not
+        # forcibly terminated — the agent applies the same check before acting.
+        return []
     claim_query = (
         select(DeploymentOperation.id)
         .where(DeploymentOperation.host_id == host_id, DeploymentOperation.status == "QUEUED")
         .order_by(DeploymentOperation.created_at.asc())
         .limit(limit)
     )
-    if not docker_enabled:
-        claim_query = claim_query.where(DeploymentOperation.op_type != "DEPLOY")
     queued_ids = db.scalars(claim_query).all()
     claimed: list[AgentCommand] = []
     for op_id in queued_ids:
@@ -301,12 +360,20 @@ def poll_commands(db: Session, host_id: str, limit: int = 8, docker_enabled: boo
         updated = db.execute(
             update(DeploymentOperation)
             .where(DeploymentOperation.id == op_id, DeploymentOperation.status == "QUEUED")
-            .values(status="RUNNING", claimed_at=now, updated_at=now, timeout_at=now + timedelta(seconds=get_settings().op_claim_timeout_seconds))
+            .values(
+                status="RUNNING",
+                claimed_at=now,
+                updated_at=now,
+                timeout_at=now + timedelta(seconds=get_settings().op_claim_timeout_seconds),
+                claim_generation=DeploymentOperation.claim_generation + 1,
+            )
+            .execution_options(synchronize_session=False)
         )
         if updated.rowcount == 1:
             db.add(OperationEvent(operation_id=op_id, event="CLAIMED", detail=f"host={host_id}"))
             op = db.get(DeploymentOperation, op_id)
             cmd = AgentCommand(**_op_out(op).model_dump())
+            cmd.claim_generation = op.claim_generation
             # Template payload rides on EVERY op type: the agent needs
             # container_name to act (DEPLOY runs it; START/STOP address it).
             # Phase 2 attached it only for DEPLOY, so real START/STOP failed
@@ -329,8 +396,13 @@ def poll_commands(db: Session, host_id: str, limit: int = 8, docker_enabled: boo
 def submit_result(
     db: Session, host_id: str, operation_id: str, req  # CommandResultRequest
 ) -> tuple[DeploymentOperation, bool]:
-    """Record the agent's result. First write wins; duplicates are accepted
-    with accepted=False and never overwrite existing evidence."""
+    """Record the agent's result with a conditional (CAS) terminal transition.
+
+    Exactly one submission wins. A duplicate delivery, a result from an older
+    claim generation, or a result that arrives after another writer already
+    terminated the operation is acknowledged with accepted=False and never
+    overwrites the recorded evidence (RC2 F07).
+    """
     op = db.get(DeploymentOperation, operation_id)
     if op is None:
         raise ApiError(404, ErrorCode.OPERATION_NOT_FOUND, f"operation {operation_id} not found")
@@ -339,16 +411,47 @@ def submit_result(
     if op.status in TERMINAL:
         # Idempotent redelivery: keep original evidence.
         return op, False
-    op.status = req.status
-    op.completed_at = _utcnow()
-    op.updated_at = op.completed_at
+
+    now = _utcnow()
+    values: dict = {
+        "status": req.status,
+        "completed_at": now,
+        "updated_at": now,
+        "error_code": req.error_code,
+        "error_message": (req.error_message or "")[:512] or None,
+    }
     if req.result is not None:
-        op.result_json = json.dumps(req.result)[:2048]
-    op.error_code = req.error_code
-    op.error_message = (req.error_message or "")[:512] or None
-    db.add(OperationEvent(operation_id=op.id, event="RESULT", detail=f"status={req.status}"))
+        serialized = json.dumps(req.result)
+        # Never store a character-truncated (invalid) JSON document.
+        values["result_json"] = (
+            serialized if len(serialized) <= 2048 else json.dumps({"_truncated": True})
+        )
+
+    conditions = [
+        DeploymentOperation.id == operation_id,
+        DeploymentOperation.host_id == host_id,
+        DeploymentOperation.status.in_(IN_FLIGHT),
+    ]
+    requested_generation = getattr(req, "claim_generation", None)
+    if requested_generation is not None:
+        conditions.append(DeploymentOperation.claim_generation == requested_generation)
+
+    updated = db.execute(
+        update(DeploymentOperation)
+        .where(*conditions)
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if updated.rowcount != 1:
+        # Lost the race, stale generation, or already terminal: do not write.
+        db.rollback()
+        current = db.get(DeploymentOperation, operation_id)
+        return current, False
+
+    db.add(OperationEvent(operation_id=operation_id, event="RESULT", detail=f"status={req.status}"))
     db.commit()
-    return op, True
+    db.expire_all()
+    return db.get(DeploymentOperation, operation_id), True
 
 
 def get_operation(db: Session, operation_id: str) -> DeploymentOperation:

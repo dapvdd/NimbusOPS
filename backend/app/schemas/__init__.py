@@ -161,11 +161,21 @@ class HostMetricsResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: Literal["ok"]
+    # RC2 F12: a dependency failure must be visible in the payload, not hidden
+    # behind a static "ok".
+    status: Literal["ok", "degraded"]
     service: Literal["nimbusops-control-server"]
-    version: Literal["0.1.0"]
+    version: str
+    # RC2 F15: immutable build marker (NIMBUSOPS_BUILD_SHA), "unknown" if absent.
+    build: str
     server_time: datetime
     database: Literal["ok", "degraded"]
+
+
+class ReadinessResponse(BaseModel):
+    ready: bool
+    database: Literal["ok", "degraded"]
+    version: str
 
 
 # ------------------------------------------------------------------ Phase 2
@@ -207,6 +217,10 @@ class OperationOut(BaseModel):
 class OperationListResponse(BaseModel):
     operations: list[OperationOut]
     count: int
+    # RC2 F10: total matching rows and the window offset, so clients can page
+    # toward older history instead of silently losing recent operations.
+    total: int
+    offset: int = 0
 
 
 class OperationEventOut(BaseModel):
@@ -270,6 +284,8 @@ class CommandPollResponse(BaseModel):
 class AgentCommand(OperationOut):
     """Command delivered to an agent: operation plus execution payload."""
     template: dict | None = None  # image/ports/name for DEPLOY ops
+    # RC2 F07: fencing generation for this claim; echoed back with the result.
+    claim_generation: int = 0
 
 
 class CommandResultRequest(BaseModel):
@@ -277,11 +293,16 @@ class CommandResultRequest(BaseModel):
     result: dict | None = None
     error_code: str | None = Field(default=None, max_length=64)
     error_message: str | None = Field(default=None, max_length=512)
+    # Optional for backward compatibility; enforced when present.
+    claim_generation: int | None = Field(default=None, ge=0)
 
 
 class CommandResultResponse(BaseModel):
     operation_id: str
-    status: Literal["SUCCEEDED", "FAILED", "UNKNOWN"]
+    # A rejected (accepted=False) result can leave the operation non-terminal
+    # (stale fencing) or already terminal (duplicate delivery), so the honest
+    # current state is echoed rather than only terminal states.
+    status: Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"]
     accepted: bool
 
 

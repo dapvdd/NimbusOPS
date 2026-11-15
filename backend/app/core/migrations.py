@@ -100,6 +100,8 @@ _NEW_HOST_COLUMNS = {
 _NEW_OP_COLUMNS = {
     # §2.6 claim-timeout support (claimed_at already exists from Phase 2)
     "timeout_at": ("TIMESTAMP", None),
+    # RC2 F07: fencing counter; legacy rows start at 0 (never claimed).
+    "claim_generation": ("INTEGER", "0"),
 }
 
 _INDEXES = {
@@ -107,6 +109,16 @@ _INDEXES = {
     "ix_host_events_host": "CREATE INDEX IF NOT EXISTS ix_host_events_host ON host_events (host_id, at)",
     "ix_inventory_host": "CREATE UNIQUE INDEX IF NOT EXISTS ix_inventory_snapshots_host ON inventory_snapshots (host_id)",
 }
+
+# RC2 F07: at most one non-terminal operation per deployment. Created
+# separately because a legacy DB may already contain duplicates produced by
+# the RC1 race; in that case the index is skipped (fail-safe boot) and an
+# operator must reconcile, rather than the migration aborting app startup.
+_INFLIGHT_INDEX_DDL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_ops_inflight_deployment "
+    "ON deployment_operations (deployment_id) "
+    "WHERE status IN ('QUEUED', 'RUNNING')"
+)
 
 
 def _engine_for(url: str) -> Engine:
@@ -153,14 +165,33 @@ def upgrade_phase3b(database_url: str | None = None) -> None:
         # 3. deployment_operations.timeout_at (no backfill: legacy ops have no claim deadline).
         if inspect(eng).has_table("deployment_operations"):
             op_cols = {c["name"] for c in inspect(eng).get_columns("deployment_operations")}
-            for col, (ddl, _default) in _NEW_OP_COLUMNS.items():
+            for col, (ddl, default) in _NEW_OP_COLUMNS.items():
                 if col not in op_cols:
                     conn.execute(text(f"ALTER TABLE deployment_operations ADD COLUMN {col} {ddl}"))
                     logger.info("migration: added deployment_operations.%s", col)
+                if default is not None:
+                    conn.execute(
+                        text(
+                            f"UPDATE deployment_operations SET {col} = {default} "
+                            f"WHERE {col} IS NULL"
+                        )
+                    )
 
         # 4. Indexes.
         for name, ddl in _INDEXES.items():
             conn.execute(text(ddl))
+
+        # 4b. RC2 F07 single-in-flight guard. Skip (never abort startup) when a
+        # legacy database still holds duplicate in-flight rows.
+        if inspect(eng).has_table("deployment_operations"):
+            try:
+                conn.execute(text(_INFLIGHT_INDEX_DDL))
+            except Exception:  # noqa: BLE001 - duplicate legacy data must not block boot
+                logger.warning(
+                    "migration: ux_ops_inflight_deployment not created; "
+                    "deployment_operations still holds duplicate in-flight rows "
+                    "(operator reconciliation required)"
+                )
 
         # 5. Version marker (records that the upgrade ran; not a gate).
         conn.execute(

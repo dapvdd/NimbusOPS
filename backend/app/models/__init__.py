@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -135,6 +135,14 @@ class DeploymentOperation(Base):
     __table_args__ = (
         Index("ix_ops_deployment_created", "deployment_id", "created_at"),
         Index("ix_ops_host_status", "host_id", "status"),
+        # RC2 F07: at most one nonterminal operation per deployment, enforced
+        # by the database (not just a read-then-write check).
+        Index(
+            "ux_ops_inflight_deployment",
+            "deployment_id",
+            unique=True,
+            sqlite_where=text("status IN ('QUEUED','RUNNING')"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -149,6 +157,9 @@ class DeploymentOperation(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Phase 3B: claim deadline; RUNNING ops past this point are re-queued by the reconciler.
     timeout_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # RC2 F07: fencing counter, incremented on every claim. A result carrying a
+    # stale generation is refused so a delayed reply cannot win after a requeue.
+    claim_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     # Verifiable evidence the agent reported (container id, http probe, etc.).

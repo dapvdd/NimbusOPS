@@ -58,10 +58,11 @@ def test_list_operations_all(client):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["count"] == 3
+    assert body["total"] == 3
     ids = [o["id"] for o in body["operations"]]
-    # Deterministic order: insertion (created ASC) — pinned so the UI can rely
-    # on oldest-first; the API is a bounded window, not a full audit dump.
-    assert ids == ["op-hist-a", "op-hist-b", "op-hist-c"]
+    # RC2 F10: newest first. A bounded window that starts at the oldest row
+    # hides every recent operation from the operator.
+    assert ids == ["op-hist-c", "op-hist-b", "op-hist-a"]
 
 
 def test_list_operations_filter_status(client):
@@ -83,8 +84,28 @@ def test_list_operations_limit_and_order(client):
     _seed(client)
     body = client.get("/api/v1/operations", params={"limit": 2}).json()
     assert body["count"] == 2
-    # Bounded result; deterministic ordering required.
-    assert [o["id"] for o in body["operations"]] == ["op-hist-a", "op-hist-b"]
+    assert body["total"] == 3
+    # Newest-first bounded window.
+    assert [o["id"] for o in body["operations"]] == ["op-hist-c", "op-hist-b"]
+
+
+def test_list_operations_offset_reaches_older_rows(client):
+    """RC2 F10: offset navigation must reach rows beyond the first window."""
+    _seed(client)
+    first = client.get("/api/v1/operations", params={"limit": 2}).json()
+    second = client.get("/api/v1/operations", params={"limit": 2, "offset": 2}).json()
+    assert first["total"] == second["total"] == 3
+    assert [o["id"] for o in first["operations"]] == ["op-hist-c", "op-hist-b"]
+    assert [o["id"] for o in second["operations"]] == ["op-hist-a"]
+    assert client.get("/api/v1/operations", params={"offset": -1}).status_code == 422
+
+
+def test_list_operations_status_filter_is_server_side(client):
+    """A status filter must narrow the set before the window is taken."""
+    _seed(client)
+    body = client.get("/api/v1/operations", params={"status": "SUCCEEDED", "limit": 1}).json()
+    assert body["total"] == 1
+    assert [o["id"] for o in body["operations"]] == ["op-hist-a"]
 
 
 def test_list_operations_limit_validated(client):
