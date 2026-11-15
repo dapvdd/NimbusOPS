@@ -43,8 +43,13 @@ class Config:
             raise ConfigError("server_url is required")
         if not self.server_url.startswith(("http://", "https://")):
             raise ConfigError(f"server_url must be http(s): {self.server_url!r}")
-        if not self.enrollment_token:
-            raise ConfigError("enrollment_token is required (never hardcode a default)")
+        # The enrollment token is only needed for *fresh* enrollment. A re-running
+        # agent with a persisted identity must start without it (RC1 recovery:
+        # restarting the agent after the token env var is gone must not crash).
+        if not self.enrollment_token and not load_identity(pathlib.Path(self.state_file)):
+            raise ConfigError(
+                "enrollment_token is required when no stored identity exists (never hardcode a default)"
+            )
         if not (MIN_INTERVAL <= self.interval <= MAX_INTERVAL):
             raise ConfigError(f"interval must be within [{MIN_INTERVAL}, {MAX_INTERVAL}] s")
         self.state_file = pathlib.Path(self.state_file)

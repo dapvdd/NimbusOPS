@@ -29,6 +29,23 @@ def test_config_rejects_empty_enrollment_token():
         Config(server_url="http://x", enrollment_token="")
 
 
+def test_config_allows_empty_token_when_identity_file_exists(tmp_path):
+    """Regression (RC1 recovery): a re-running agent with a stored identity must
+    start without being handed an enrollment token. Only *fresh* enrollment
+    needs the token; startup validation must not demand it when the identity
+    file already exists."""
+    state_file = tmp_path / "agent.json"
+    save_identity(state_file, Identity(host_id="h1", agent_token="stored-tok"))
+    cfg = Config(server_url="http://x", enrollment_token="", state_file=state_file)
+    assert cfg.enrollment_token == ""
+
+
+def test_config_rejects_empty_token_when_no_identity_file(tmp_path):
+    """Fresh enroll (no identity file) still requires the enrollment token."""
+    with pytest.raises(ConfigError):
+        Config(server_url="http://x", enrollment_token="", state_file=tmp_path / "nope.json")
+
+
 def test_config_rejects_interval_out_of_range():
     with pytest.raises(ConfigError):
         Config(server_url="http://x", enrollment_token="t", interval=1.0)

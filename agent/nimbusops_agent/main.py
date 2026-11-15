@@ -157,17 +157,16 @@ def main(argv: list[str] | None = None) -> int:
 
     import os
 
-    cfg = Config(
-        server_url=args.server_url or os.environ.get("NIMBUSOPS_AGENT_SERVER_URL", DEFAULT_SERVER_URL),
-        enrollment_token=args.enrollment_token or os.environ.get("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", ""),
-        interval=float(args.interval or os.environ.get("NIMBUSOPS_AGENT_INTERVAL", DEFAULT_INTERVAL)),
-        state_file=pathlib.Path(
-            args.state_file or os.environ.get("NIMBUSOPS_AGENT_STATE_FILE", str(pathlib.Path.home() / ".nimbusops" / "agent.json"))
-        ),
-        once=args.once,
-    )
     try:
-        cfg.__post_init__()
+        cfg = Config(
+            server_url=args.server_url or os.environ.get("NIMBUSOPS_AGENT_SERVER_URL", DEFAULT_SERVER_URL),
+            enrollment_token=args.enrollment_token or os.environ.get("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", ""),
+            interval=float(args.interval or os.environ.get("NIMBUSOPS_AGENT_INTERVAL", DEFAULT_INTERVAL)),
+            state_file=pathlib.Path(
+                args.state_file or os.environ.get("NIMBUSOPS_AGENT_STATE_FILE", str(pathlib.Path.home() / ".nimbusops" / "agent.json"))
+            ),
+            once=args.once,
+        )
     except ConfigError as exc:
         print(f"nimbusops-agent: invalid configuration: {exc}", file=sys.stderr)
         return 2

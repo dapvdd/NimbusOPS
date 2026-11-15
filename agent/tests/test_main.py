@@ -83,6 +83,43 @@ def test_run_exits_code3_when_credentials_rejected(tmp_path, monkeypatch):
     assert code == 3
 
 
+def test_main_returns_exit2_on_config_error(monkeypatch, tmp_path):
+    """Regression (RC1 recovery): invalid configuration must exit with code 2
+    and a clean stderr message, never an unhandled traceback (Config() builds
+    the dataclass, so __post_init__ runs at construction — outside the old
+    try/except around the second __post_init__ call)."""
+    import os
+
+    monkeypatch.setenv("NIMBUSOPS_AGENT_SERVER_URL", "http://x")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", "")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_STATE_FILE", str(tmp_path / "absent.json"))
+    # No identity file at that path: token-less startup must fail cleanly.
+    assert agent_main.main([]) == 2
+
+
+def test_main_accepts_tokenless_restart_with_stored_identity(monkeypatch, tmp_path):
+    """Regression (RC1 recovery): restart with a stored identity and no
+    enrollment token must proceed past configuration (exit code comes from the
+    run loop, not a ConfigError)."""
+    import os
+
+    cfg_state = tmp_path / "agent.json"
+    from nimbusops_agent.config import save_identity
+
+    save_identity(cfg_state, Identity(host_id="h1", agent_token="tok"))
+    monkeypatch.setenv("NIMBUSOPS_AGENT_SERVER_URL", "http://x")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", "")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_STATE_FILE", str(cfg_state))
+
+    def _run_ok(_cfg):
+        assert _cfg.enrollment_token == ""
+        assert _cfg.state_file == cfg_state
+        return 0
+
+    monkeypatch.setattr(agent_main, "run", _run_ok)
+    assert agent_main.main([]) == 0
+
+
 def test_run_graceful_stop_after_one_cycle(tmp_path, monkeypatch):
     telem_posts = []
 
