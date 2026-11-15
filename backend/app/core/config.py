@@ -6,12 +6,21 @@ outright rather than silently permitting unauthenticated registration.
 """
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="NIMBUSOPS_", extra="ignore")
+
+    # Canonical enrollment profile (RC2 F01/F08):
+    #   legacy    - shared enrollment_token accepted for NEW hosts only
+    #               (re-enrollment always requires an operator bootstrap token)
+    #   bootstrap - secure profile: the legacy shared-token path is disabled;
+    #               only single-use, hostname-scoped bootstrap tokens enroll
+    #   disabled  - no enrollment of any kind
+    enrollment_mode: Literal["legacy", "bootstrap", "disabled"] = "legacy"
 
     # Shared secret presented by operators when enrolling a new agent.
     # Empty/absent => enrollment endpoint returns 503 (enrollment disabled).

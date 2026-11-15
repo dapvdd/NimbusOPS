@@ -38,15 +38,43 @@ def enroll(req: EnrollRequest, db: Session = Depends(get_db)) -> EnrollResponse:
     if req.hostname.startswith("sim-"):
         host_service.record_enrollment_denied(db, req.hostname, "simulated hostname rejected")
         raise ApiError(400, ErrorCode.SIMULATED_HOST_REJECTED, "simulated hostnames are rejected by the control server")
+    # RC2 F01: exactly one enrollment credential is allowed. Accepting both
+    # would make the effective trust root ambiguous and untestable.
+    if req.bootstrap_token and req.enrollment_token:
+        host_service.record_enrollment_denied(db, req.hostname, "conflicting enrollment credentials")
+        raise ApiError(
+            400,
+            ErrorCode.ENROLLMENT_MODE_CONFLICT,
+            "provide exactly one of bootstrap_token or enrollment_token",
+        )
+    if settings.enrollment_mode == "disabled":
+        host_service.record_enrollment_denied(db, req.hostname, "enrollment disabled by operator")
+        raise ApiError(503, ErrorCode.ENROLLMENT_DISABLED, "enrollment is disabled on this server")
     if req.bootstrap_token:
         # Phase 3B secure path: single-use, operator-issued, hostname-scoped.
-        token_row = enrollment_service.consume_bootstrap_token(db, req.bootstrap_token, req.hostname)
-        host, token = host_service.enroll_host(db, req, via_bootstrap=True)
-        # Backfill which host consumed the token (id known only after insert).
-        token_row.consumed_by = host.id
-        db.commit()
+        # RC2 F07: token consumption and host creation share one transaction,
+        # so a host-creation failure cannot burn the token.
+        try:
+            token_row = enrollment_service.consume_bootstrap_token(
+                db, req.bootstrap_token, req.hostname, commit=False
+            )
+            host, token = host_service.enroll_host(db, req, via_bootstrap=True)
+            # Backfill which host consumed the token (id known only after insert).
+            token_row.consumed_by = host.id
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
         return EnrollResponse(host_id=host.id, agent_token=token)
-    # Legacy shared-token path (O5 transition; removed in Phase 4).
+    # Legacy shared-token path (O5 transition). RC2 F08: the secure profile
+    # disables it outright; re-enrollment never succeeds through it.
+    if settings.enrollment_mode == "bootstrap":
+        host_service.record_enrollment_denied(db, req.hostname, "legacy enrollment disabled (bootstrap mode)")
+        raise ApiError(
+            503,
+            ErrorCode.ENROLLMENT_DISABLED,
+            "legacy shared-token enrollment is disabled; use an operator-issued bootstrap token",
+        )
     if not settings.enrollment_token:
         host_service.record_enrollment_denied(db, req.hostname, "enrollment disabled (no token configured)")
         raise ApiError(

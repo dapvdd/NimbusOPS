@@ -75,7 +75,7 @@ def issue_bootstrap_token(
     return row, token
 
 
-def consume_bootstrap_token(db: Session, token: str, hostname: str) -> BootstrapToken:
+def consume_bootstrap_token(db: Session, token: str, hostname: str, commit: bool = True) -> BootstrapToken:
     """Validate scope first, then atomically consume a single-use token (T2, T3).
 
     The consumption itself is one UPDATE ... WHERE consumed_at IS NULL AND
@@ -115,5 +115,6 @@ def consume_bootstrap_token(db: Session, token: str, hostname: str) -> Bootstrap
         if _as_utc(fresh.expires_at) <= now:
             raise ApiError(410, ErrorCode.BOOTSTRAP_TOKEN_EXPIRED, "bootstrap token expired")
         raise ApiError(409, ErrorCode.BOOTSTRAP_TOKEN_CONSUMED, "bootstrap token already used")
-    db.commit()
+    if commit:
+        db.commit()
     return row

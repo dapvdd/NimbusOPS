@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core.codes import ErrorCode
@@ -87,11 +88,14 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
     """
     existing = db.scalar(select(Host).where(Host.hostname == req.hostname))
     if existing is not None:
-        if existing.is_revoked and not via_bootstrap:
+        if not via_bootstrap:
+            # RC2 F08: a shared enrollment secret must never silently replace
+            # another host's credential. Only an operator-issued, hostname-
+            # scoped, single-use bootstrap token may re-enroll a hostname.
             raise ApiError(
                 409,
                 ErrorCode.HOSTNAME_TAKEN,
-                "hostname belongs to a revoked host; operator re-enroll required",
+                "hostname already enrolled; an operator-issued bootstrap token is required to re-enroll",
             )
         # Re-enrollment: rotate the token, keep host identity (id stable).
         token = generate_agent_token()
@@ -151,7 +155,17 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
             detail=None,
         )
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # Two concurrent first-enrollments for one hostname: the unique index
+        # decides the winner. Fail closed rather than creating a second row.
+        db.rollback()
+        raise ApiError(
+            409,
+            ErrorCode.HOSTNAME_TAKEN,
+            "hostname was enrolled concurrently; retry with an operator-issued bootstrap token",
+        ) from exc
     logger.info("enrollment: enrolled new host hostname=%s host_id=%s", req.hostname, host.id)
     return host, token
 
