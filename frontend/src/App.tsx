@@ -16,7 +16,7 @@ export default function App() {
         <Route path="/servers/:hostId" element={<ServerDetail />} />
         <Route path="/deployments" element={<Applications />} />
         <Route path="/activity" element={<Activity />} />
-        <Route path="/settings" element={<div><h1 className="text-3xl">Settings</h1><p className="mt-4">Simulation storage is local to this browser. Real enrollment and unregister: NOT IMPLEMENTED.</p></div>} />
+        <Route path="/settings" element={<div><h1 className="text-3xl">Settings</h1><p className="mt-4">Real host enrollment uses an operator-issued, single-use bootstrap token; credential rotation and revocation are available from the host views. Simulated identities and their history are stored only in this browser.</p></div>} />
         <Route path="/applications" element={<Applications />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

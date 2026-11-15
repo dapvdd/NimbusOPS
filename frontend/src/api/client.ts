@@ -142,11 +142,12 @@ export const api = {
   getOperation: (operationId: string) =>
     request<Operation>(`/operations/${encodeURIComponent(operationId)}`),
   // Phase 5 (FR-08): operation history with filters.
-  listOperations: (filters: { host_id?: string; status?: string; limit?: number } = {}) => {
+  listOperations: (filters: { host_id?: string; status?: string; limit?: number; offset?: number } = {}) => {
     const params = new URLSearchParams();
     if (filters.host_id) params.set("host_id", filters.host_id);
     if (filters.status) params.set("status", filters.status);
     if (filters.limit) params.set("limit", String(filters.limit));
+    if (filters.offset) params.set("offset", String(filters.offset));
     const qs = params.toString();
     return request<OperationListResponse>(`/operations${qs ? `?${qs}` : ""}`);
   },

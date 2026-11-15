@@ -2,11 +2,11 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
-from ..version import VERSION
+from .. import version as version_info
 from ..schemas import (
     HealthResponse,
     HostListResponse,
@@ -14,6 +14,7 @@ from ..schemas import (
     HostOut,
     MetricsPoint,
     PaginationMeta,
+    ReadinessResponse,
 )
 from ..services import hosts as host_service
 from ..services.hosts import compute_status, require_status_context
@@ -62,6 +63,12 @@ def _to_host_out(host, latest: Telemetry | None) -> HostOut:
 
 @router.get("/health", response_model=HealthResponse)
 def health(db: Session = Depends(get_db)) -> HealthResponse:
+    """Liveness + dependency truth.
+
+    RC2 F12: liveness stays HTTP 200 (the process is up), but the body reports
+    ``degraded`` when a dependency cannot be reached. Readiness (/ready) is the
+    endpoint that must fail for load-balancer routing decisions.
+    """
     database = "ok"
     try:
         from sqlalchemy import text
@@ -70,11 +77,35 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
     except Exception:
         database = "degraded"
     return HealthResponse(
-        status="ok",
+        status="ok" if database == "ok" else "degraded",
         service="nimbusops-control-server",
-        version=VERSION,
+        version=version_info.VERSION,
+        build=version_info.build_id(),
         server_time=datetime.now(timezone.utc),
         database=database,
+    )
+
+
+@router.get(
+    "/ready",
+    response_model=ReadinessResponse,
+    responses={503: {"model": ReadinessResponse}},
+)
+def readiness(response: Response, db: Session = Depends(get_db)) -> ReadinessResponse:
+    """Readiness probe: 503 while a required dependency is unavailable."""
+    database = "ok"
+    try:
+        from sqlalchemy import text
+
+        db.execute(text("SELECT 1"))
+    except Exception:
+        database = "degraded"
+    if database != "ok":
+        response.status_code = 503
+    return ReadinessResponse(
+        ready=database == "ok",
+        database=database,
+        version=version_info.VERSION,
     )
 
 

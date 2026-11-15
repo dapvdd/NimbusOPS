@@ -54,9 +54,10 @@ export interface HostMetricsResponse {
 }
 
 export interface HealthResponse {
-  status: "ok";
+  status: "ok" | "degraded";
   service: string;
   version: string;
+  build: string;
   server_time: string;
   database: "ok" | "degraded";
 }
@@ -113,6 +114,9 @@ export interface Operation {
 export interface OperationListResponse {
   operations: Operation[];
   count: number;
+  /** Total matching rows before the window (RC2 F10 paging). */
+  total: number;
+  offset: number;
 }
 
 export interface DeployResponse {
