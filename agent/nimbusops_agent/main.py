@@ -58,6 +58,7 @@ def ensure_enrolled(cfg: Config) -> tuple[Identity, bool]:
         ok, result = sender.enroll(
             hostname=socket.gethostname(),
             enrollment_token=cfg.enrollment_token,
+            bootstrap_token=cfg.bootstrap_token or None,
             info=collect_host_info(),
         )
     finally:
@@ -149,7 +150,12 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="nimbusops-agent", description="NimbusOps host agent")
     parser.add_argument("--server-url", default=None, help="Control server base URL")
-    parser.add_argument("--enrollment-token", default=None, help="Token for initial enrollment")
+    parser.add_argument("--enrollment-token", default=None, help="Legacy shared token for initial enrollment")
+    parser.add_argument(
+        "--bootstrap-token-file",
+        default=None,
+        help="Path to a file containing a single-use bootstrap enrollment token (preferred)",
+    )
     parser.add_argument("--interval", type=float, default=None, help="Sampling interval seconds")
     parser.add_argument("--state-file", default=None, help="Path for identity storage")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit (testing)")
@@ -157,10 +163,35 @@ def main(argv: list[str] | None = None) -> int:
 
     import os
 
+    # RC2 F01: the bootstrap token is a high-value single-use secret. Read it
+    # from the environment or a file, never from argv (process arguments are
+    # world-readable on common POSIX systems and appear in process listings).
+    bootstrap_token = os.environ.get("NIMBUSOPS_AGENT_BOOTSTRAP_TOKEN", "").strip()
+    if args.bootstrap_token_file:
+        if bootstrap_token:
+            print(
+                "nimbusops-agent: invalid configuration: set only one of "
+                "NIMBUSOPS_AGENT_BOOTSTRAP_TOKEN or --bootstrap-token-file",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            bootstrap_token = pathlib.Path(args.bootstrap_token_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            print(
+                f"nimbusops-agent: invalid configuration: cannot read bootstrap token file: {type(exc).__name__}",
+                file=sys.stderr,
+            )
+            return 2
+        if not bootstrap_token:
+            print("nimbusops-agent: invalid configuration: bootstrap token file is empty", file=sys.stderr)
+            return 2
+
     try:
         cfg = Config(
             server_url=args.server_url or os.environ.get("NIMBUSOPS_AGENT_SERVER_URL", DEFAULT_SERVER_URL),
             enrollment_token=args.enrollment_token or os.environ.get("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", ""),
+            bootstrap_token=bootstrap_token,
             interval=float(args.interval or os.environ.get("NIMBUSOPS_AGENT_INTERVAL", DEFAULT_INTERVAL)),
             state_file=pathlib.Path(
                 args.state_file or os.environ.get("NIMBUSOPS_AGENT_STATE_FILE", str(pathlib.Path.home() / ".nimbusops" / "agent.json"))

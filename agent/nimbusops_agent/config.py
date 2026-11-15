@@ -11,7 +11,9 @@ import json
 import os
 import pathlib
 import platform
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 
 import psutil
@@ -32,6 +34,10 @@ class ConfigError(ValueError):
 class Config:
     server_url: str
     enrollment_token: str
+    # RC2 F01: explicit secure enrollment mode. Exactly one credential may be
+    # supplied for a host with no stored identity. The bootstrap token is
+    # normally supplied via env/file, never as a command-line argument.
+    bootstrap_token: str = ""
     interval: float = DEFAULT_INTERVAL
     state_file: pathlib.Path = field(
         default_factory=lambda: pathlib.Path.home() / ".nimbusops" / "agent.json"
@@ -43,16 +49,30 @@ class Config:
             raise ConfigError("server_url is required")
         if not self.server_url.startswith(("http://", "https://")):
             raise ConfigError(f"server_url must be http(s): {self.server_url!r}")
-        # The enrollment token is only needed for *fresh* enrollment. A re-running
-        # agent with a persisted identity must start without it (RC1 recovery:
-        # restarting the agent after the token env var is gone must not crash).
-        if not self.enrollment_token and not load_identity(pathlib.Path(self.state_file)):
+        if self.enrollment_token and self.bootstrap_token:
             raise ConfigError(
-                "enrollment_token is required when no stored identity exists (never hardcode a default)"
+                "provide exactly one of enrollment_token or bootstrap_token"
             )
+        # Enrollment credentials are only needed for *fresh* enrollment. A
+        # re-running agent with a persisted identity must start without one.
+        if not (self.enrollment_token or self.bootstrap_token):
+            if not load_identity(pathlib.Path(self.state_file)):
+                raise ConfigError(
+                    "enrollment_token or bootstrap_token is required when no stored identity exists "
+                    "(never hardcode a default)"
+                )
         if not (MIN_INTERVAL <= self.interval <= MAX_INTERVAL):
             raise ConfigError(f"interval must be within [{MIN_INTERVAL}, {MAX_INTERVAL}] s")
         self.state_file = pathlib.Path(self.state_file)
+
+    @property
+    def enrollment_mode(self) -> str:
+        """Explicit mode: 'bootstrap', 'legacy', or 'identity' (stored)."""
+        if self.bootstrap_token:
+            return "bootstrap"
+        if self.enrollment_token:
+            return "legacy"
+        return "identity"
 
 
 @dataclass
@@ -71,13 +91,72 @@ class Identity:
         return cls(host_id=data["host_id"], agent_token=data["agent_token"])
 
 
-def save_identity(path: pathlib.Path, identity: Identity) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(identity.to_json(), encoding="utf-8")
+def _restrict_permissions(path: pathlib.Path) -> None:
+    """Best-effort owner-only access for the identity file.
+
+    POSIX: mode 0600. Windows: remove inherited ACEs and grant the current
+    user only (explicit ACL handling; os.chmod does not express this).
+    Failures are swallowed: identity usability must not depend on ACL tooling,
+    and the caller has already restricted the temp file before writing.
+    """
+    if os.name == "nt":
+        user = os.environ.get("USERNAME")
+        if not user:
+            return
+        try:
+            subprocess.run(
+                ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+                shell=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return
     try:
         os.chmod(path, 0o600)
     except OSError:
-        pass  # Best-effort on Windows (POSIX perms not applicable).
+        pass
+
+
+def save_identity(path: pathlib.Path, identity: Identity) -> None:
+    """Atomically persist identity with owner-only permissions.
+
+    RC2 F14: the bytes are written to a uniquely named temp file in the same
+    directory (created 0600 on POSIX before any write), fsync'd, then replaced
+    over the target. A crash or write failure therefore leaves either the old
+    valid identity or the new one — never a truncated file. On Windows the ACL
+    is restricted explicitly after the replace.
+    """
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = identity.to_json().encode("utf-8")
+
+    fd, tmp_name = tempfile.mkstemp(prefix=".agent-", suffix=".tmp", dir=str(path.parent))
+    tmp = pathlib.Path(tmp_name)
+    try:
+        # Restrict before writing any credential bytes.
+        try:
+            os.fchmod(fd, 0o600)
+        except (AttributeError, OSError, NotImplementedError):
+            pass
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        _restrict_permissions(path)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def load_identity(path: pathlib.Path) -> Identity | None:

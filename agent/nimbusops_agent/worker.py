@@ -105,13 +105,28 @@ class CommandWorker:
 
     def _execute_and_report(self, cmd: dict) -> None:
         op_id = str(cmd.get("id", ""))
-        payload = self._executor.execute(cmd)
+        if getattr(self._http, "docker_enabled", True) is False:
+            # RC2 F04: never mutate a Docker resource on a disabled host. The
+            # operation is reported UNKNOWN (no side effect, no fabricated
+            # success); an operator must re-submit after enabling Docker.
+            payload = {
+                "status": "UNKNOWN",
+                "result": None,
+                "error_code": "DOCKER_DISABLED",
+                "error_message": "docker operations are disabled for this host; operation was not executed",
+            }
+        else:
+            payload = self._executor.execute(cmd)
         result = {
             "status": payload.get("status", "UNKNOWN"),
             "result": payload.get("result"),
             "error_code": payload.get("error_code"),
             "error_message": payload.get("error_message"),
         }
+        # RC2 F07: echo the claim generation so a delayed result from an
+        # expired claim cannot win after the operation was re-delivered.
+        if cmd.get("claim_generation") is not None:
+            result["claim_generation"] = cmd["claim_generation"]
         ok, detail = self._http.submit_result(op_id, result)
         if not ok:
             # Bounded retry for result submission; server is idempotent so a

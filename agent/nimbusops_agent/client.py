@@ -50,6 +50,9 @@ class Sender:
         self.retry_status = retry_status or RETRYABLE_STATUS
         self._sleep = sleep_fn
         self._client = httpx.Client(timeout=timeout)
+        # RC2 F04: authoritative dispatch flag from the last heartbeat.
+        # None means "not yet told"; callers should treat that conservatively.
+        self.docker_enabled: bool | None = None
 
     def close(self) -> None:
         self._client.close()
@@ -59,6 +62,13 @@ class Sender:
 
     def _post(self, path: str, payload: dict[str, Any]) -> tuple[bool, str]:
         """POST with bounded exponential backoff on transient failures."""
+        ok, detail, _body = self._post_json(path, payload)
+        return ok, detail
+
+    def _post_json(
+        self, path: str, payload: dict[str, Any]
+    ) -> tuple[bool, str, Any]:
+        """POST and return (ok, detail, parsed_body_or_None)."""
         url = f"{self.server_url}{path}"
         delay = self.backoff_initial
         last_detail = "unknown error"
@@ -70,22 +80,47 @@ class Sender:
                 logger.warning("POST %s failed (%s), attempt %d/%d", path, last_detail, attempt, self.max_retries)
             else:
                 if 200 <= resp.status_code < 300:
-                    return True, "ok"
+                    try:
+                        return True, "ok", resp.json()
+                    except ValueError:
+                        return True, "ok", None
                 if resp.status_code in (401, 403):
                     raise AuthError(f"server rejected credentials (HTTP {resp.status_code})")
                 if resp.status_code in self.retry_status:
                     last_detail = f"server error HTTP {resp.status_code}"
                     logger.warning("POST %s got %s, attempt %d/%d", path, resp.status_code, attempt, self.max_retries)
                 else:
-                    return False, f"server rejected payload: HTTP {resp.status_code}: {resp.text[:200]}"
+                    return False, f"server rejected payload: HTTP {resp.status_code}: {resp.text[:200]}", None
             if attempt < self.max_retries:
                 jitter = random.uniform(0, delay * 0.3)
                 self._sleep(min(delay + jitter, self.backoff_max))
                 delay = min(delay * self.backoff_base, self.backoff_max)
-        return False, f"giving up after {self.max_retries} attempts: {last_detail}"
+        return False, f"giving up after {self.max_retries} attempts: {last_detail}", None
 
-    def enroll(self, hostname: str, enrollment_token: str, info: dict) -> tuple[bool, dict | str]:
-        payload = {"hostname": hostname, "enrollment_token": enrollment_token, **info}
+    def enroll(
+        self,
+        hostname: str,
+        enrollment_token: str = "",
+        info: dict | None = None,
+        *,
+        bootstrap_token: str | None = None,
+    ) -> tuple[bool, dict | str]:
+        """Enroll using exactly one credential.
+
+        RC2 F01 canonical contract: a bootstrap token is sent as
+        ``bootstrap_token``; the legacy shared secret is sent as
+        ``enrollment_token``. Never both. Token material is never included in
+        a returned error detail.
+        """
+        if bootstrap_token and enrollment_token:
+            raise ValueError("provide exactly one of bootstrap_token or enrollment_token")
+        if not bootstrap_token and not enrollment_token:
+            raise ValueError("an enrollment credential is required")
+        payload: dict[str, Any] = {"hostname": hostname, **(info or {})}
+        if bootstrap_token:
+            payload["bootstrap_token"] = bootstrap_token
+        else:
+            payload["enrollment_token"] = enrollment_token
         try:
             resp = self._client.post(f"{self.server_url}/api/v1/agents/enroll", json=payload)
         except httpx.HTTPError as exc:
@@ -105,7 +140,10 @@ class Sender:
                 payload[key] = value.astimezone(timezone.utc).isoformat()
             else:
                 payload[key] = value
-        return self._post("/api/v1/agents/heartbeat", payload)
+        ok, detail, body = self._post_json("/api/v1/agents/heartbeat", payload)
+        if ok and isinstance(body, dict) and isinstance(body.get("docker_enabled"), bool):
+            self.docker_enabled = body["docker_enabled"]
+        return ok, detail
 
     def send_telemetry(self, telemetry: dict) -> tuple[bool, str]:
         payload: dict[str, Any] = {}

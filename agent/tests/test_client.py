@@ -126,3 +126,65 @@ def test_client_error_400_not_retried():
     assert not ok
     assert len(attempts) == 1
     assert "422" in detail
+
+
+# ------------------------------------------------ RC2 F01 enrollment contract
+
+def test_enroll_bootstrap_sends_only_bootstrap_token():
+    bodies: list[dict] = []
+
+    def handler(request):
+        import json as _json
+
+        bodies.append(_json.loads(request.content))
+        return httpx.Response(200, json={"host_id": "h-boot", "agent_token": "agent-tok"})
+
+    s = _make(handler)
+    ok, result = s.enroll(
+        hostname="host-a", enrollment_token="", bootstrap_token="bootstrap-secret", info={"platform": "Linux"}
+    )
+    assert ok, result
+    assert result == {"host_id": "h-boot", "agent_token": "agent-tok"}
+    assert bodies[0]["bootstrap_token"] == "bootstrap-secret"
+    assert "enrollment_token" not in bodies[0]
+    assert bodies[0]["hostname"] == "host-a"
+
+
+def test_enroll_legacy_sends_only_legacy_token():
+    bodies: list[dict] = []
+
+    def handler(request):
+        import json as _json
+
+        bodies.append(_json.loads(request.content))
+        return httpx.Response(200, json={"host_id": "h", "agent_token": "t"})
+
+    s = _make(handler)
+    ok, _ = s.enroll(hostname="host-a", enrollment_token="legacy-secret", info={})
+    assert ok
+    assert bodies[0]["enrollment_token"] == "legacy-secret"
+    assert "bootstrap_token" not in bodies[0]
+
+
+def test_enroll_rejects_ambiguous_credentials():
+    s = _make(lambda request: httpx.Response(200, json={}))
+    with pytest.raises(ValueError):
+        s.enroll(
+            hostname="host-a", enrollment_token="legacy", bootstrap_token="bootstrap", info={}
+        )
+
+
+def test_enroll_requires_a_credential():
+    s = _make(lambda request: httpx.Response(200, json={}))
+    with pytest.raises(ValueError):
+        s.enroll(hostname="host-a", enrollment_token="", info={})
+
+
+def test_heartbeat_updates_docker_enabled_flag():
+    def handler(request):
+        return httpx.Response(200, json={"host_id": "h1", "status": "ONLINE", "docker_enabled": False})
+
+    s = _make(handler)
+    ok, _ = s.send_heartbeat({})
+    assert ok
+    assert s.docker_enabled is False

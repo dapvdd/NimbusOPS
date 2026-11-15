@@ -147,3 +147,26 @@ def test_run_graceful_stop_after_one_cycle(tmp_path, monkeypatch):
     payload = telem_posts[0]
     assert 0.0 <= payload["cpu_percent"] <= 100.0
     assert payload["memory_total_bytes"] > 0
+
+
+# ------------------------------------------------ RC2 F01 enrollment contract
+
+def test_ensure_enrolled_uses_bootstrap_token(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["bootstrap_token"] == "boot-secret"
+        assert "enrollment_token" not in body
+        return httpx.Response(200, json={"host_id": "h-boot", "agent_token": "agent-tok"})
+
+    monkeypatch.setattr(agent_main, "Sender", _sender_factory(handler, calls))
+    cfg = Config(
+        server_url="http://test",
+        enrollment_token="",
+        bootstrap_token="boot-secret",
+        state_file=tmp_path / "a.json",
+    )
+    identity, created = ensure_enrolled(cfg)
+    assert created is True
+    assert identity.host_id == "h-boot"

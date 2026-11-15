@@ -68,6 +68,8 @@ def test_restart_managed_container_succeeds():
         calls.append(argv)
         if argv[:2] == ["docker", "version"]:
             return 0, "27.0", ""
+        if argv[:2] == ["docker", "inspect"]:
+            return 0, '{"nimbusops.managed":"true","nimbusops.deployment":"d1"}', ""
         if argv[:2] == ["docker", "restart"]:
             return 0, "", ""
         if argv[:2] == ["docker", "ps"]:
@@ -134,6 +136,8 @@ def test_container_name_stays_single_argv_element():
         captured.append(argv)
         if argv[:2] == ["docker", "version"]:
             return 0, "27.0", ""
+        if argv[:2] == ["docker", "inspect"]:
+            return 0, '{"nimbusops.managed":"true","nimbusops.deployment":"d1"}', ""
         if argv[:2] == ["docker", "restart"]:
             return 0, "", ""
         return 0, "Up 1 second", ""
