@@ -149,6 +149,30 @@ def test_run_graceful_stop_after_one_cycle(tmp_path, monkeypatch):
     assert payload["memory_total_bytes"] > 0
 
 
+@pytest.mark.parametrize("http_status,expected_exit", [(200, 0), (422, 1)])
+def test_once_exits_without_waiting_for_next_cycle(tmp_path, monkeypatch, http_status, expected_exit):
+    """--once must return after reporting, rather than entering interval sleep."""
+    reports = []
+
+    def handler(request):
+        reports.append(request.url.path)
+        return httpx.Response(http_status, json={"retained": True})
+
+    monkeypatch.setattr(agent_main, "Sender", _sender_factory(handler, []))
+    monkeypatch.setattr(agent_main, "install_signal_handlers", lambda: None)
+    cfg = Config(server_url="http://test", state_file=tmp_path / "once.json",
+                 enrollment_token="test", once=True, telemetry_only=True)
+    _seed_identity(cfg)
+
+    def unexpected_wait(_seconds):
+        if _seconds != 0.2:  # psutil's CPU sampling interval is intentional
+            raise AssertionError("--once waited for another cycle")
+
+    monkeypatch.setattr(agent_main.time, "sleep", unexpected_wait)
+    assert run(cfg) == expected_exit
+    assert len(reports) == 2
+
+
 # ------------------------------------------------ RC2 F01 enrollment contract
 
 def test_ensure_enrolled_uses_bootstrap_token(tmp_path, monkeypatch):

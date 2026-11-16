@@ -43,6 +43,7 @@ class Config:
         default_factory=lambda: pathlib.Path.home() / ".nimbusops" / "agent.json"
     )
     once: bool = False
+    telemetry_only: bool = False
 
     def __post_init__(self) -> None:
         if not self.server_url:

@@ -1,7 +1,7 @@
 """Agent main loop: enroll (once), then heartbeat + telemetry cycles.
 
-Graceful shutdown on SIGINT/SIGTERM. No inbound ports, no command
-execution: the agent only ever POSTs outbound.
+Graceful shutdown on SIGINT/SIGTERM. No inbound ports. Normal mode executes
+approved Docker operations; telemetry-only mode disables all Docker paths.
 """
 
 from __future__ import annotations
@@ -71,24 +71,27 @@ def ensure_enrolled(cfg: Config) -> tuple[Identity, bool]:
     return identity, True
 
 
-def run_cycle(sender: Sender, worker: CommandWorker | None = None) -> tuple[bool, str]:
+def run_cycle(
+    sender: Sender, worker: CommandWorker | None = None, *, telemetry_only: bool = False
+) -> tuple[bool, str]:
     """One heartbeat + telemetry (+ command poll) cycle. Returns (ok, detail)."""
     info = host_info_snapshot()
     # Phase 5 (FR-03): attach a read-only docker inventory snapshot when Docker
     # is available; heartbeat stays inventory-less when it is not (additive).
-    try:
-        from .docker_exec import DockerExecutor
-        inv = DockerExecutor().inventory()
-        if inv.get("status") == "SUCCEEDED":
-            info["inventory"] = inv["result"]
-    except Exception as exc:  # inventory never breaks the monitoring loop
-        logger.debug("inventory unavailable: %s", exc)
+    if not telemetry_only:
+        try:
+            from .docker_exec import DockerExecutor
+            inv = DockerExecutor().inventory()
+            if inv.get("status") == "SUCCEEDED":
+                info["inventory"] = inv["result"]
+        except Exception as exc:  # inventory never breaks the monitoring loop
+            logger.debug("inventory unavailable: %s", exc)
     ok_hb, detail_hb = sender.send_heartbeat(info)
     telemetry = collect_telemetry()
     ok_t, detail_t = sender.send_telemetry(telemetry)
 
     detail = f"heartbeat: {detail_hb}; telemetry: {detail_t}"
-    if worker is not None:
+    if worker is not None and not telemetry_only:
         try:
             outcome = worker.poll_once()
             detail += f"; commands: {outcome.value}"
@@ -115,9 +118,11 @@ def run(cfg: Config) -> int:
 
     sender = Sender(server_url=cfg.server_url, host_id=identity.host_id, agent_token=identity.agent_token)
     # Docker integration is optional: monitoring runs whether or not Docker works.
-    from .docker_exec import DockerExecutor
+    worker = None
+    if not cfg.telemetry_only:
+        from .docker_exec import DockerExecutor
 
-    worker = CommandWorker(http=SenderCommandAdapter(sender), executor=DockerExecutor())
+        worker = CommandWorker(http=SenderCommandAdapter(sender), executor=DockerExecutor())
     logger.info(
         "agent %s started: server=%s interval=%.1fs state=%s",
         __version__, cfg.server_url, cfg.interval, cfg.state_file,
@@ -127,12 +132,15 @@ def run(cfg: Config) -> int:
         while not _stop["requested"]:
             started = time.monotonic()
             try:
-                ok, detail = run_cycle(sender, worker)
+                ok, detail = run_cycle(sender, worker, telemetry_only=cfg.telemetry_only)
                 if not ok:
                     logger.warning("cycle incomplete: %s", detail)
             except AuthError as exc:
                 logger.error("credentials rejected, stopping: %s", exc)
                 exit_code = 3
+                break
+            if cfg.once:
+                exit_code = 0 if ok else 1
                 break
             elapsed = time.monotonic() - started
             wait = max(0.0, cfg.interval - elapsed)
@@ -159,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--interval", type=float, default=None, help="Sampling interval seconds")
     parser.add_argument("--state-file", default=None, help="Path for identity storage")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit (testing)")
+    parser.add_argument("--telemetry-only", action="store_true", help="Disable Docker inventory and operation execution/polling")
     args = parser.parse_args(argv)
 
     import os
@@ -197,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.state_file or os.environ.get("NIMBUSOPS_AGENT_STATE_FILE", str(pathlib.Path.home() / ".nimbusops" / "agent.json"))
             ),
             once=args.once,
+            telemetry_only=args.telemetry_only,
         )
     except ConfigError as exc:
         print(f"nimbusops-agent: invalid configuration: {exc}", file=sys.stderr)
