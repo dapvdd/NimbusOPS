@@ -8,6 +8,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Overview from "../Overview";
 import HostDetail from "../HostDetail";
+import { StatusBadge } from "../../components/StatusBadge";
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -200,5 +201,15 @@ describe("HostDetail", () => {
       </MemoryRouter>,
     );
     await waitFor(() => expect(screen.getByText(/host not found/i)).toBeInTheDocument());
+  });
+
+  it("renders StatusBadge with REVOKED status and unknown fallback safely", () => {
+    const { container: c1 } = render(<StatusBadge status={"REVOKED" as any} />);
+    expect(c1).toBeInTheDocument();
+    expect(screen.getByText("Revoked")).toBeInTheDocument();
+
+    const { container: c2 } = render(<StatusBadge status={"UNKNOWN_VAL" as any} />);
+    expect(c2).toBeInTheDocument();
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
   });
 });

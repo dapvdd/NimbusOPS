@@ -59,6 +59,27 @@ def compute_status(
     return "OFFLINE"
 
 
+def effective_status(
+    *,
+    is_revoked: bool,
+    enrollment_status: str,
+    last_seen_at: datetime | None,
+    now: datetime,
+    stale_s: int,
+    offline_s: int,
+) -> str:
+    """Display-truth status (sprint D1): revocation always wins.
+
+    A revoked host is terminal until re-enrollment — it must never render as
+    ONLINE (fresh heartbeat) or merely OFFLINE. Tombstoned hosts carry
+    `enrollment_status="REVOKED"` with `is_revoked=False`; both spellings are
+    revoked. Non-revoked hosts keep the exact `compute_status` contract.
+    """
+    if is_revoked or enrollment_status == "REVOKED":
+        return "REVOKED"
+    return compute_status(last_seen_at, now, stale_s, offline_s)
+
+
 def telemetry_age_seconds(last_telemetry_at: datetime | None, now: datetime) -> float | None:
     last_telemetry_at = _as_utc(last_telemetry_at)
     if last_telemetry_at is None:
@@ -141,9 +162,10 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
         boot_time=req.boot_time,
     )
     db.add(host)
+    db.flush()
     record_host_event(
         db,
-        None,
+        host.id,
         "ENROLLED",
         actor="agent",
         detail=f"hostname={req.hostname} via={'bootstrap' if via_bootstrap else 'legacy-token'}",
@@ -223,6 +245,10 @@ def touch_heartbeat(db: Session, host: Host, req: HeartbeatRequest) -> datetime:
             setattr(host, field, value)
     if req.boot_time is not None:
         host.boot_time = req.boot_time
+    # Sprint D3: the reported mode is rewritten EVERY heartbeat, including
+    # None (an older agent's omission clears it) — a stale value must never
+    # outlive the binary that reported it.
+    host.agent_mode = req.agent_mode
     db.commit()
     return now
 

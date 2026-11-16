@@ -96,7 +96,7 @@ def auth_headers(host_id: str, token: str) -> dict:
 @pytest.fixture(autouse=True)
 def authenticated_reads(request, client, db_session):
     """Authenticate only GET requests in existing read-contract test modules."""
-    read_modules = {"test_hosts_telemetry", "test_host_pagination", "test_operation_history", "test_host_environment", "test_deployments", "test_host_lifecycle", "test_inventory_api"}
+    read_modules = {"test_hosts_telemetry", "test_host_pagination", "test_operation_history", "test_host_environment", "test_deployments", "test_host_lifecycle", "test_inventory_api", "test_agent_mode_hostout", "test_effective_status", "test_bootstrap_intent", "test_host_events"}
     if request.module.__name__.rsplit('.', 1)[-1] not in read_modules:
         yield
         return

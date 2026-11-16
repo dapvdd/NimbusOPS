@@ -94,7 +94,7 @@ def test_bootstrap_reenroll_rotates_with_stable_identity(client, db_session):
     assert first.status_code == 200
     first_body = first.json()
 
-    tok2 = _issue(client, admin, "renew-host").json()["token"]
+    tok2 = _issue(client, admin, "renew-host", intent="reenroll").json()["token"]
     second = _bootstrap_enroll(client, "renew-host", tok2)
     assert second.status_code == 200
     second_body = second.json()

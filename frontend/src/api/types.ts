@@ -3,7 +3,7 @@
  * the dashboard: if the backend changes, these change with it.
  */
 
-export type HostStatus = "ONLINE" | "STALE" | "OFFLINE";
+export type HostStatus = "ONLINE" | "STALE" | "OFFLINE" | "REVOKED";
 
 export interface LatestMetrics {
   recorded_at: string;

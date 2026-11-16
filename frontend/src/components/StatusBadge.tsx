@@ -21,10 +21,23 @@ export const STATUS_META: Record<HostStatus, { label: string; dot: string; text:
     text: "text-signal-bad",
     bg: "bg-signal-bad/10 border-signal-bad/30",
   },
+  REVOKED: {
+    label: "Revoked",
+    dot: "bg-signal-bad",
+    text: "text-signal-bad",
+    bg: "bg-signal-bad/10 border-signal-bad/30",
+  },
+};
+
+const FALLBACK_META = {
+  label: "Unknown",
+  dot: "bg-surface-muted",
+  text: "text-text-muted",
+  bg: "bg-surface-elevated/40 border-surface-border",
 };
 
 export function StatusBadge({ status, size = "md" }: { status: HostStatus; size?: "sm" | "md" }) {
-  const meta = STATUS_META[status];
+  const meta = STATUS_META[status] ?? FALLBACK_META;
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full border px-2 ${size === "sm" ? "py-0.5 text-[11px]" : "py-1 text-xs"} font-medium ${meta.bg} ${meta.text}`}

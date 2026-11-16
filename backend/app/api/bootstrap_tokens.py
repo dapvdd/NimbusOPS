@@ -5,8 +5,9 @@ ADMIN-only: issue (201, token shown once), list (no token material), revoke
 """
 
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,6 +26,8 @@ router = APIRouter(prefix="/api/v1/operators/bootstrap-tokens")
 class BootstrapTokenCreateRequest(BaseModel):
     hostname: str = Field(min_length=1, max_length=255)
     expires_in_seconds: int | None = Field(default=None, ge=1, le=3600)
+    # Sprint D2: enrollment intent, enforced again at consumption.
+    intent: Literal["enroll", "reenroll"] = "enroll"
 
 
 class BootstrapTokenOut(BaseModel):
@@ -54,7 +57,11 @@ def issue_token(
 ) -> dict:
     settings = get_settings()
     row, plaintext = issue_bootstrap_token(
-        db, op, req.hostname, req.expires_in_seconds or settings.bootstrap_token_ttl_seconds
+        db,
+        op,
+        req.hostname,
+        req.expires_in_seconds or settings.bootstrap_token_ttl_seconds,
+        intent=req.intent,
     )
     return {
         "id": row.id,
@@ -67,10 +74,25 @@ def issue_token(
 
 @router.get("")
 def list_tokens(
+    active: bool | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=200),
     op: object = Depends(require_operator(role="ADMIN")),
     db: Session = Depends(get_db),
 ) -> BootstrapTokenListResponse:
-    rows = db.scalars(select(BootstrapToken).order_by(BootstrapToken.created_at.desc())).all()
+    """Sprint D2: `?active=true` (unconsumed, unrevoked, unexpired) + `?limit=`
+    drive the onboarding hook; the unfiltered shape is unchanged."""
+    q = select(BootstrapToken)
+    if active:
+        now = _now()
+        q = q.where(
+            BootstrapToken.consumed_at.is_(None),
+            BootstrapToken.revoked_at.is_(None),
+            BootstrapToken.expires_at > now,
+        )
+    q = q.order_by(BootstrapToken.created_at.desc())
+    if limit is not None:
+        q = q.limit(limit)
+    rows = db.scalars(q).all()
     return BootstrapTokenListResponse(
         tokens=[
             BootstrapTokenOut(
