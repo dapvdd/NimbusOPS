@@ -104,3 +104,25 @@ def issue_reenroll_bootstrap(db: Session, host_id: str, actor) -> tuple[Host, st
     record_host_event(db, host.id, "RE_ENROLL_REQUESTED", actor=actor.username, detail=f"bootstrap={row.id}")
     db.commit()
     return host, plaintext, row.expires_at
+
+
+def set_environment(db: Session, host: Host, environment: str, actor: str) -> Host:
+    """S4-3 (Phase B): operator-set hybrid-cloud classification.
+
+    ADMIN-only at the API layer; validation of the literal is done by the
+    request schema (Pydantic → 422). Classification is display/ops grouping —
+    never an authorization input. The previous value is kept in the audit
+    event so mislabels can be traced.
+    """
+    old = host.environment
+    if old != environment:
+        host.environment = environment
+        record_host_event(
+            db,
+            host.id,
+            "ENVIRONMENT_SET",
+            actor=actor,
+            detail=f"hostname={host.hostname} old={old} new={environment}",
+        )
+        logger.info("lifecycle: environment for %s set %s -> %s", host.hostname, old, environment)
+    return host
