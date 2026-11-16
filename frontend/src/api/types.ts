@@ -36,6 +36,8 @@ export interface Host {
   docker_enabled: boolean;
   /** Phase 4 (FR-19): environment grouping metadata. */
   environment: "PRIVATE" | "PUBLIC-CLOUD";
+  /** S4-1b: set on lifecycle endpoints' responses; absent on list reads. */
+  credential_version?: number;
 }
 
 export interface HostListResponse {

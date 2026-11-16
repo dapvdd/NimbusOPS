@@ -119,6 +119,8 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
 
       <HostDocker key={host.id} host={host} onChanged={() => void load()} />
 
+      <LifecyclePanel host={host} onChanged={() => void load()} />
+
       <div>
         <h2 className="mb-2 text-sm font-medium text-ink-200">Recent telemetry</h2>
         {!history || history.points.length === 0 ? (
@@ -130,6 +132,95 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * S4-1b (Phase C): ADMIN-only credential lifecycle panel on host detail.
+ *
+ * Rotate: POST /hosts/{id}/rotate-credential → new token shown once + grace
+ * deadline. Re-enroll: POST /hosts/{id}/re-enroll → bootstrap token shown
+ * once. Both surface typed failures via role=alert; VIEWER sees nothing.
+ * Tokens live in component state only — never in storage, URL, or logs.
+ */
+function LifecyclePanel({ host, onChanged }: { host: Host; onChanged: () => void }) {
+  const admin = useAdmin();
+  const [rotation, setRotation] = useState<{ token: string; graceUntil: string } | null>(null);
+  const [bootstrap, setBootstrap] = useState<{ token: string; expiresAt: string } | null>(null);
+  const [busy, setBusy] = useState<"" | "rotate" | "reenroll">("");
+  const [error, setError] = useState("");
+
+  if (!admin) return null;
+
+  const rotate = async () => {
+    if (busy || rotation) return;
+    setBusy("rotate");
+    setError("");
+    try {
+      const r = await api.rotateCredential(host.id);
+      setRotation({ token: r.new_agent_token, graceUntil: r.old_token_expires_at });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiFailure ? err.message : "Rotation failed.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const reenroll = async () => {
+    if (busy || bootstrap) return;
+    setBusy("reenroll");
+    setError("");
+    try {
+      const r = await api.issueReenrollBootstrap(host.id);
+      setBootstrap({ token: r.bootstrap_token, expiresAt: r.expires_at });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiFailure ? err.message : "Re-enroll failed.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <section aria-label="Credential lifecycle" className="space-y-3 rounded-lg border border-ink-700 bg-ink-850 p-4">
+      <h2 className="font-medium">Credential lifecycle</h2>
+      <p className="text-sm text-ink-300">
+        Credential version {host.credential_version ?? 1}. Rotation keeps the previous token valid for a grace
+        window; re-enroll issues a single-use bootstrap for a lost/revoked credential.
+      </p>
+      <div className="flex flex-wrap gap-4">
+        <button
+          className="rounded border border-ink-600 px-3 py-2 text-sm disabled:opacity-40"
+          disabled={busy !== "" || rotation !== null}
+          onClick={() => void rotate()}
+        >
+          Rotate credential
+        </button>
+        <button
+          className="rounded border border-ink-600 px-3 py-2 text-sm disabled:opacity-40"
+          disabled={busy !== "" || bootstrap !== null}
+          onClick={() => void reenroll()}
+        >
+          Re-enroll this host
+        </button>
+      </div>
+      {rotation && (
+        <div className="space-y-2 rounded border border-signal-info/40 bg-ink-900 p-3">
+          <p className="text-xs font-semibold text-amber-300">New agent token — shown once. Copy it now.</p>
+          <code className="block break-all rounded border border-ink-600 bg-ink-950 p-2 font-mono text-xs">{rotation.token}</code>
+          <p data-testid="grace-deadline" className="text-xs text-ink-300">Grace ends {formatUtcTime(rotation.graceUntil)} — update the agent before then.</p>
+        </div>
+      )}
+      {bootstrap && (
+        <div className="space-y-2 rounded border border-signal-info/40 bg-ink-900 p-3">
+          <p className="text-xs font-semibold text-amber-300">Bootstrap token — shown once. Copy it now.</p>
+          <code className="block break-all rounded border border-ink-600 bg-ink-950 p-2 font-mono text-xs">{bootstrap.token}</code>
+          <p className="text-xs text-ink-300">Expires {formatUtcTime(bootstrap.expiresAt)}.</p>
+        </div>
+      )}
+      {error && <p role="alert" className="text-xs text-signal-bad">{error}</p>}
+    </section>
   );
 }
 
