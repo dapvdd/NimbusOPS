@@ -205,7 +205,7 @@ export const api = {
   listBootstrapTokens: () => request<BootstrapTokenListResponse>("/operators/bootstrap-tokens"),
   revokeBootstrapToken: (id: string) =>
     request<{ id: string; revoked_at: string | null }>(`/operators/bootstrap-tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  patchHost: (id: string, patch: { docker_enabled?: boolean }) =>
+  patchHost: (id: string, patch: { docker_enabled?: boolean; environment?: "PRIVATE" | "PUBLIC-CLOUD" }) =>
     request<Record<string, unknown>>(`/hosts/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

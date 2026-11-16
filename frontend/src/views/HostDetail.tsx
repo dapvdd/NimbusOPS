@@ -11,6 +11,7 @@ import { MetricCard } from "../components/MetricCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { ErrorPanel, LoadingPanel } from "../components/StatePanels";
 import { ageSeconds, formatAge, formatUtcTime } from "../lib/format";
+import { useAdmin } from "../auth/Session";
 import HostDocker from "../components/HostDocker";
 
 export default function HostDetail({ view = "overview" }: { view?: "overview" | "monitoring" } = {}) {
@@ -66,6 +67,7 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold tracking-tight">{host.hostname}</h1>
         <StatusBadge status={host.status} />
+        <EnvironmentSelector host={host} onChanged={() => void load()} />
         {host.is_revoked && (
           <span className="rounded-full border border-signal-bad/40 bg-signal-bad/10 px-2 py-0.5 text-xs text-signal-bad">
             Credential revoked
@@ -137,6 +139,63 @@ function InfoPanel({ title, children }: { title: string; children: React.ReactNo
       <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-ink-300">{title}</h3>
       <dl className="space-y-2">{children}</dl>
     </div>
+  );
+}
+
+/**
+ * S4-3 (Phase B, frontend slice): ADMIN-only environment selector.
+ *
+ * Reads the host's current classification, PATCHes /hosts/{id} with the new
+ * value, and refetches on success. VIEWERs see the value as plain text (the
+ * endpoint is ADMIN-only; hiding the control is honest — the API rejects them
+ * with 403 anyway). A failed PATCH surfaces an error and keeps the selector on
+ * the persisted value (no optimistic state).
+ */
+function EnvironmentSelector({ host, onChanged }: { host: Host; onChanged: () => void }) {
+  const admin = useAdmin();
+  const [value, setValue] = useState<"PRIVATE" | "PUBLIC-CLOUD">(host.environment);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setValue(host.environment);
+  }, [host.environment]);
+
+  if (!admin) {
+    return <span className="rounded-full border border-ink-600 px-2 py-0.5 text-xs text-ink-300">{host.environment}</span>;
+  }
+
+  const change = async (next: "PRIVATE" | "PUBLIC-CLOUD") => {
+    const previous = value;
+    setValue(next);
+    setBusy(true);
+    setError("");
+    try {
+      await api.patchHost(host.id, { environment: next });
+      onChanged();
+    } catch (err) {
+      setValue(previous); // Revert to the persisted value on failure.
+      setError(err instanceof ApiFailure ? err.message : "Environment update failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <label className="flex items-center gap-2 text-xs text-ink-300">
+      Environment
+      <select
+        aria-label="Environment"
+        className="rounded border border-ink-600 bg-ink-900 p-1.5 text-xs text-ink-100"
+        value={value}
+        disabled={busy || host.is_revoked}
+        onChange={(e) => void change(e.target.value as "PRIVATE" | "PUBLIC-CLOUD")}
+      >
+        <option value="PRIVATE">PRIVATE</option>
+        <option value="PUBLIC-CLOUD">PUBLIC-CLOUD</option>
+      </select>
+      {error && <span role="alert" className="text-signal-bad">{error}</span>}
+    </label>
   );
 }
 
