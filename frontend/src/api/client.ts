@@ -230,4 +230,10 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ new_bootstrap_token: true }),
     }),
+  reenrollHost: (id: string) =>
+    request<ReenrollResponse>(`/hosts/${encodeURIComponent(id)}/re-enroll`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_bootstrap_token: true }),
+    }),
 };

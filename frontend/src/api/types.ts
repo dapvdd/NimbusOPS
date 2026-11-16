@@ -233,12 +233,13 @@ export interface ReadinessResponse {
 }
 
 export interface HostEventOut {
-  id: string;
-  host_id: string;
-  event_type: string;
-  description: string;
+  id: number;
+  host_id: string | null;
+  event: string;
+  actor: string;
+  detail: string | null;
+  at: string;
   created_at: string;
-  details?: Record<string, unknown> | null;
 }
 
 export interface HostEventListResponse {

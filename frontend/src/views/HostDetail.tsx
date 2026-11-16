@@ -1,32 +1,44 @@
 /**
- * Host detail: identity, OS info, agent status, current metrics, and a
- * bounded metric history. All values come from the API; missing → "—".
+ * Host detail: identity, OS info, agent status, runtime info, current metrics,
+ * events history, and bounded metric history.
+ * All values come from the API; missing → "—".
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiFailure } from "../api/client";
-import type { Host, HostMetricsResponse } from "../api/types";
+import type { Host, HostEventOut, HostMetricsResponse } from "../api/types";
 import { MetricCard } from "../components/MetricCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { ErrorPanel, LoadingPanel } from "../components/StatePanels";
 import { ageSeconds, formatAge, formatUtcTime } from "../lib/format";
 import { useAdmin } from "../auth/Session";
 import HostDocker from "../components/HostDocker";
+import HostActions from "./host/HostActions";
 
 export default function HostDetail({ view = "overview" }: { view?: "overview" | "monitoring" } = {}) {
   const { hostId = "" } = useParams();
   const [host, setHost] = useState<Host | null>(null);
   const [history, setHistory] = useState<HostMetricsResponse | null>(null);
+  const [events, setEvents] = useState<HostEventOut[]>([]);
+  const [eventsError, setEventsError] = useState<string | null>(null);
   const [error, setError] = useState<ApiFailure | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [h, m] = await Promise.all([api.getHost(hostId), api.getHostMetrics(hostId, 60)]);
+      const [h, m, evRes] = await Promise.all([
+        api.getHost(hostId),
+        api.getHostMetrics(hostId, 60),
+        api.listHostEvents(hostId, 50).catch((err) => {
+          setEventsError(err instanceof ApiFailure ? err.message : "Unable to load events.");
+          return { events: [], count: 0 };
+        }),
+      ]);
       setHost(h);
       setHistory(m);
+      setEvents(evRes.events || []);
     } catch (err) {
       setError(err as ApiFailure);
     } finally {
@@ -35,8 +47,8 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
   }, [hostId]);
 
   useEffect(() => {
-    load();
-    const id = window.setInterval(load, 30_000);
+    void load();
+    const id = window.setInterval(() => void load(), 30_000);
     return () => window.clearInterval(id);
   }, [load]);
 
@@ -64,15 +76,19 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
           </Link>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-lg font-semibold tracking-tight">{host.hostname}</h1>
-        <StatusBadge status={host.status} />
-        <EnvironmentSelector host={host} onChanged={() => void load()} />
-        {host.is_revoked && (
-          <span className="rounded-full border border-signal-bad/40 bg-signal-bad/10 px-2 py-0.5 text-xs text-signal-bad">
-            Credential revoked
-          </span>
-        )}
+
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-lg font-semibold tracking-tight">{host.hostname}</h1>
+          <StatusBadge status={host.status} />
+          <EnvironmentSelector host={host} onChanged={() => void load()} />
+          {host.is_revoked && (
+            <span className="rounded-full border border-signal-bad/40 bg-signal-bad/10 px-2 py-0.5 text-xs text-signal-bad">
+              Credential revoked
+            </span>
+          )}
+        </div>
+        <HostActions host={host} onRefresh={() => void load()} />
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -92,7 +108,7 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
       </div>
 
       {view === "overview" && (
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
           <InfoPanel title="Host">
             <InfoRow label="Host ID" value={<span className="font-mono text-xs">{host.id}</span>} />
             <InfoRow label="Platform" value={host.platform ? `${host.platform} ${host.platform_release ?? ""}` : "—"} />
@@ -106,11 +122,45 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
             <InfoRow
               label="Agent status"
               value={
-                host.status === "ONLINE"
-                  ? "Reporting"
-                  : host.status === "STALE"
-                    ? "Late — telemetry may be outdated"
-                    : "Not reporting"
+                host.is_revoked || host.status === "REVOKED"
+                  ? "Credential revoked — re-enroll required"
+                  : host.status === "ONLINE"
+                    ? "Reporting"
+                    : host.status === "STALE"
+                      ? "Late — telemetry may be outdated"
+                      : "Not reporting"
+              }
+            />
+          </InfoPanel>
+          <InfoPanel title="Runtime">
+            <InfoRow
+              label="Agent mode"
+              value={host.agent_mode ?? "not reported"}
+            />
+            <InfoRow
+              label="Docker permission"
+              value={host.docker_enabled ? "Enabled" : "Disabled"}
+            />
+            <InfoRow
+              label="Credential version"
+              value={host.credential_version ?? 1}
+            />
+            {host.credential_grace_until && (
+              <InfoRow
+                label="Grace deadline"
+                value={
+                  <span data-testid="runtime-grace-deadline">
+                    {formatUtcTime(host.credential_grace_until)}
+                  </span>
+                }
+              />
+            )}
+            <InfoRow
+              label="Next action"
+              value={
+                host.is_revoked || host.status === "REVOKED"
+                  ? "Re-enroll required"
+                  : "Normal"
               }
             />
           </InfoPanel>
@@ -119,7 +169,45 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
 
       <HostDocker key={host.id} host={host} onChanged={() => void load()} />
 
-      <LifecyclePanel host={host} onChanged={() => void load()} />
+      {/* Host Events Section */}
+      <section aria-label="Host events" className="space-y-3">
+        <h2 className="text-sm font-medium text-ink-200">Host events</h2>
+        {eventsError && (
+          <p className="rounded border border-signal-bad/40 bg-signal-bad/10 p-2 text-xs text-signal-bad">
+            {eventsError}
+          </p>
+        )}
+        {events.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-ink-600 bg-ink-900 p-6 text-center text-xs text-ink-400">
+            No events yet
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-ink-700">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-ink-700 bg-ink-900 text-left text-xs uppercase tracking-wider text-ink-400">
+                  <th className="px-4 py-2 font-medium">Time (UTC)</th>
+                  <th className="px-4 py-2 font-medium">Event</th>
+                  <th className="px-4 py-2 font-medium">Actor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((ev, i) => (
+                  <tr
+                    key={ev.id ?? i}
+                    data-testid="host-event-item"
+                    className="border-b border-ink-800 last:border-0 font-mono text-xs"
+                  >
+                    <td className="px-4 py-2 text-ink-300">{formatUtcTime(ev.created_at)}</td>
+                    <td className="px-4 py-2 font-semibold text-ink-100">{ev.event}</td>
+                    <td className="px-4 py-2 text-ink-300">{ev.actor ?? "system"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       <div>
         <h2 className="mb-2 text-sm font-medium text-ink-200">Recent telemetry</h2>
@@ -135,95 +223,6 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
   );
 }
 
-/**
- * S4-1b (Phase C): ADMIN-only credential lifecycle panel on host detail.
- *
- * Rotate: POST /hosts/{id}/rotate-credential → new token shown once + grace
- * deadline. Re-enroll: POST /hosts/{id}/re-enroll → bootstrap token shown
- * once. Both surface typed failures via role=alert; VIEWER sees nothing.
- * Tokens live in component state only — never in storage, URL, or logs.
- */
-function LifecyclePanel({ host, onChanged }: { host: Host; onChanged: () => void }) {
-  const admin = useAdmin();
-  const [rotation, setRotation] = useState<{ token: string; graceUntil: string } | null>(null);
-  const [bootstrap, setBootstrap] = useState<{ token: string; expiresAt: string } | null>(null);
-  const [busy, setBusy] = useState<"" | "rotate" | "reenroll">("");
-  const [error, setError] = useState("");
-
-  if (!admin) return null;
-
-  const rotate = async () => {
-    if (busy || rotation) return;
-    setBusy("rotate");
-    setError("");
-    try {
-      const r = await api.rotateCredential(host.id);
-      setRotation({ token: r.new_agent_token, graceUntil: r.old_token_expires_at });
-      onChanged();
-    } catch (err) {
-      setError(err instanceof ApiFailure ? err.message : "Rotation failed.");
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const reenroll = async () => {
-    if (busy || bootstrap) return;
-    setBusy("reenroll");
-    setError("");
-    try {
-      const r = await api.issueReenrollBootstrap(host.id);
-      setBootstrap({ token: r.bootstrap_token, expiresAt: r.expires_at });
-      onChanged();
-    } catch (err) {
-      setError(err instanceof ApiFailure ? err.message : "Re-enroll failed.");
-    } finally {
-      setBusy("");
-    }
-  };
-
-  return (
-    <section aria-label="Credential lifecycle" className="space-y-3 rounded-lg border border-ink-700 bg-ink-850 p-4">
-      <h2 className="font-medium">Credential lifecycle</h2>
-      <p className="text-sm text-ink-300">
-        Credential version {host.credential_version ?? 1}. Rotation keeps the previous token valid for a grace
-        window; re-enroll issues a single-use bootstrap for a lost/revoked credential.
-      </p>
-      <div className="flex flex-wrap gap-4">
-        <button
-          className="rounded border border-ink-600 px-3 py-2 text-sm disabled:opacity-40"
-          disabled={busy !== "" || rotation !== null}
-          onClick={() => void rotate()}
-        >
-          Rotate credential
-        </button>
-        <button
-          className="rounded border border-ink-600 px-3 py-2 text-sm disabled:opacity-40"
-          disabled={busy !== "" || bootstrap !== null}
-          onClick={() => void reenroll()}
-        >
-          Re-enroll this host
-        </button>
-      </div>
-      {rotation && (
-        <div className="space-y-2 rounded border border-signal-info/40 bg-ink-900 p-3">
-          <p className="text-xs font-semibold text-amber-300">New agent token — shown once. Copy it now.</p>
-          <code className="block break-all rounded border border-ink-600 bg-ink-950 p-2 font-mono text-xs">{rotation.token}</code>
-          <p data-testid="grace-deadline" className="text-xs text-ink-300">Grace ends {formatUtcTime(rotation.graceUntil)} — update the agent before then.</p>
-        </div>
-      )}
-      {bootstrap && (
-        <div className="space-y-2 rounded border border-signal-info/40 bg-ink-900 p-3">
-          <p className="text-xs font-semibold text-amber-300">Bootstrap token — shown once. Copy it now.</p>
-          <code className="block break-all rounded border border-ink-600 bg-ink-950 p-2 font-mono text-xs">{bootstrap.token}</code>
-          <p className="text-xs text-ink-300">Expires {formatUtcTime(bootstrap.expiresAt)}.</p>
-        </div>
-      )}
-      {error && <p role="alert" className="text-xs text-signal-bad">{error}</p>}
-    </section>
-  );
-}
-
 function InfoPanel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-ink-700 bg-ink-850 p-4">
@@ -235,12 +234,6 @@ function InfoPanel({ title, children }: { title: string; children: React.ReactNo
 
 /**
  * S4-3 (Phase B, frontend slice): ADMIN-only environment selector.
- *
- * Reads the host's current classification, PATCHes /hosts/{id} with the new
- * value, and refetches on success. VIEWERs see the value as plain text (the
- * endpoint is ADMIN-only; hiding the control is honest — the API rejects them
- * with 403 anyway). A failed PATCH surfaces an error and keeps the selector on
- * the persisted value (no optimistic state).
  */
 function EnvironmentSelector({ host, onChanged }: { host: Host; onChanged: () => void }) {
   const admin = useAdmin();

@@ -212,4 +212,100 @@ describe("HostDetail", () => {
     expect(c2).toBeInTheDocument();
     expect(screen.getByText("Unknown")).toBeInTheDocument();
   });
+
+  it("revoked host shows 'Credential revoked — re-enroll required'", async () => {
+    const revokedHost = {
+      ...hostOnline,
+      status: "REVOKED",
+      is_revoked: true,
+      enrollment_status: "REVOKED",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/metrics")) return jsonResponse({ host_id: "h-1", points: [], count: 0 });
+      if (String(url).includes("/events")) return jsonResponse({ events: [], count: 0 });
+      return jsonResponse(revokedHost);
+    }));
+    render(
+      <MemoryRouter>
+        <HostDetail />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByRole("heading", { name: "web-01" })).toBeInTheDocument());
+    expect(screen.getByText("Credential revoked — re-enroll required")).toBeInTheDocument();
+  });
+
+  it("agent_mode=null renders 'not reported'", async () => {
+    const hostNoMode = {
+      ...hostOnline,
+      agent_mode: null,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/metrics")) return jsonResponse({ host_id: "h-1", points: [], count: 0 });
+      if (String(url).includes("/events")) return jsonResponse({ events: [], count: 0 });
+      return jsonResponse(hostNoMode);
+    }));
+    render(
+      <MemoryRouter>
+        <HostDetail />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByRole("heading", { name: "web-01" })).toBeInTheDocument());
+    expect(screen.getByText("not reported")).toBeInTheDocument();
+  });
+
+  it("grace countdown renders only when credential_grace_until is non-null", async () => {
+    const hostWithGrace = {
+      ...hostOnline,
+      credential_grace_until: "2026-11-20T12:00:00Z",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/metrics")) return jsonResponse({ host_id: "h-1", points: [], count: 0 });
+      if (String(url).includes("/events")) return jsonResponse({ events: [], count: 0 });
+      return jsonResponse(hostWithGrace);
+    }));
+    const { unmount } = render(
+      <MemoryRouter>
+        <HostDetail />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByRole("heading", { name: "web-01" })).toBeInTheDocument());
+    expect(screen.getByTestId("runtime-grace-deadline")).toBeInTheDocument();
+    unmount();
+
+    // Now with null grace
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/metrics")) return jsonResponse({ host_id: "h-1", points: [], count: 0 });
+      if (String(url).includes("/events")) return jsonResponse({ events: [], count: 0 });
+      return jsonResponse({ ...hostOnline, credential_grace_until: null });
+    }));
+    render(
+      <MemoryRouter>
+        <HostDetail />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByRole("heading", { name: "web-01" })).toBeInTheDocument());
+    expect(screen.queryByTestId("runtime-grace-deadline")).not.toBeInTheDocument();
+  });
+
+  it("events render newest-first with the mocked API", async () => {
+    const mockEvents = [
+      { id: 2, host_id: "h-1", event: "ROTATE_CREDENTIAL", actor: "admin", detail: null, at: "2026-11-16T12:00:00Z", created_at: "2026-11-16T12:00:00Z" },
+      { id: 1, host_id: "h-1", event: "ENROLLED", actor: "system", detail: null, at: "2026-11-16T10:00:00Z", created_at: "2026-11-16T10:00:00Z" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/metrics")) return jsonResponse({ host_id: "h-1", points: [], count: 0 });
+      if (String(url).includes("/events")) return jsonResponse({ events: mockEvents, count: 2 });
+      return jsonResponse(hostOnline);
+    }));
+    render(
+      <MemoryRouter>
+        <HostDetail />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByRole("heading", { name: "web-01" })).toBeInTheDocument());
+    const eventItems = await screen.findAllByTestId("host-event-item");
+    expect(eventItems).toHaveLength(2);
+    expect(eventItems[0]).toHaveTextContent("ROTATE_CREDENTIAL");
+    expect(eventItems[1]).toHaveTextContent("ENROLLED");
+  });
 });

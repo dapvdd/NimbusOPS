@@ -42,13 +42,13 @@ it("selects a host from the sidebar and navigates to its views", async () => {
   fireEvent.click(link);
   expect(await screen.findByRole("heading", { name: "david-lab" })).toBeInTheDocument();
 });
-it("navigates simulation tabs without sending its identity to the API", async () => {
+it("never renders a browser-local simulated id as a host, and never queries the API with it", async () => {
   const host = addSimServer("edge-demo", "SIMULATED-DEV");
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "ok", version: "test", server_time: new Date().toISOString(), hosts: [], applications: [] }) }));
   render(<MemoryRouter initialEntries={[`/servers/${host.id}`]}><App /></MemoryRouter>);
-  expect(await screen.findByRole("heading", { name: "edge-demo" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));
-  expect(screen.getByText("Simulated hosts have no real deployments.")).toBeInTheDocument();
+  // The real-host view refuses simulated identities instead of inventing one.
+  expect(await screen.findByTestId("error-panel")).toBeInTheDocument();
+  expect(screen.getByText(/simulated resources cannot access real infrastructure endpoints/i)).toBeInTheDocument();
   expect(vi.mocked(fetch).mock.calls.every(([url]) => !String(url).includes(host.id))).toBe(true);
   expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
 });
@@ -58,7 +58,7 @@ it("treats a URL-encoded simulated id as simulated on direct navigation", async 
   const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "ok", version: "test", server_time: new Date().toISOString(), hosts: [], applications: [] }) });
   vi.stubGlobal("fetch", fetch);
   render(<MemoryRouter initialEntries={[`/servers/${encoded}`]}><App /></MemoryRouter>);
-  expect(await screen.findByRole("heading", { name: "encoded-demo" })).toBeInTheDocument();
+  expect(await screen.findByTestId("error-panel")).toBeInTheDocument();
   expect(fetch.mock.calls.every(([url]) => !String(url).toLowerCase().includes("sim"))).toBe(true);
 });
 it("treats the legacy /hosts route for a simulated id as simulated", async () => {
@@ -66,7 +66,7 @@ it("treats the legacy /hosts route for a simulated id as simulated", async () =>
   const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "ok", version: "test", server_time: new Date().toISOString(), hosts: [], applications: [] }) });
   vi.stubGlobal("fetch", fetch);
   render(<MemoryRouter initialEntries={[`/hosts/${host.id}`]}><App /></MemoryRouter>);
-  expect(await screen.findByRole("heading", { name: "legacy-demo" })).toBeInTheDocument();
+  expect(await screen.findByTestId("error-panel")).toBeInTheDocument();
   expect(fetch.mock.calls.every(([url]) => !String(url).includes(host.id))).toBe(true);
 });
 it("shows different content for Monitoring and Overview on a real host", async () => {
