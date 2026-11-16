@@ -5,8 +5,14 @@ import { AppShell } from "./components/AppShell";
 import Servers from "./views/Servers";
 import ServerDetail from "./views/ServerDetail";
 import Activity from "./views/Activity";
+import { Protected, SessionProvider } from './auth/Session';
+import Login from './views/Login';
 
 export default function App() {
+  return <SessionProvider><Routes><Route path="/login" element={<Login />} /><Route path="*" element={<Protected><Console /></Protected>} /></Routes></SessionProvider>;
+}
+
+function Console() {
   return (
     <AppShell>
       <Routes>

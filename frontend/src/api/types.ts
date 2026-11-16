@@ -209,3 +209,10 @@ export interface ReenrollResponse {
   expires_at: string;
   hostname: string;
 }
+export interface HostInventory {
+  host_id: string;
+  observed_at: string;
+  received_at: string;
+  age_seconds: number | null;
+  containers: { id: string; names: string; image: string; state: string; managed: boolean; deployment_id: string | null }[];
+}

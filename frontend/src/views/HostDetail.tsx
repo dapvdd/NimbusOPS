@@ -11,6 +11,7 @@ import { MetricCard } from "../components/MetricCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { ErrorPanel, LoadingPanel } from "../components/StatePanels";
 import { ageSeconds, formatAge, formatUtcTime } from "../lib/format";
+import HostDocker from "../components/HostDocker";
 
 export default function HostDetail({ view = "overview" }: { view?: "overview" | "monitoring" } = {}) {
   const { hostId = "" } = useParams();
@@ -113,6 +114,8 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
           </InfoPanel>
         </div>
       )}
+
+      <HostDocker key={host.id} host={host} onChanged={() => void load()} />
 
       <div>
         <h2 className="mb-2 text-sm font-medium text-ink-200">Recent telemetry</h2>

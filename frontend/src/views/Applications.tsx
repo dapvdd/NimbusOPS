@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiFailure } from "../api/client";
+import { useAdmin } from '../auth/Session';
 import type {
   ManagedApp,
   ManagedAppListResponse,
@@ -73,6 +74,7 @@ function AppStateBadge({ app }: { app: ManagedApp }) {
 }
 
 function AppRow({ app, onAction }: { app: ManagedApp; onAction: () => void }) {
+  const admin = useAdmin();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const op = app.last_operation;
@@ -129,14 +131,14 @@ function AppRow({ app, onAction }: { app: ManagedApp; onAction: () => void }) {
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           onClick={() => act("start")}
-          disabled={inFlight || busy !== null || app.container_state === "RUNNING"}
+          disabled={!admin || inFlight || busy !== null || app.container_state === "RUNNING"}
           className="rounded-md border border-ink-600 bg-ink-800 px-3 py-1.5 text-xs text-ink-100 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {busy === "start" ? "Starting…" : "Start"}
         </button>
         <button
           onClick={() => act("stop")}
-          disabled={inFlight || busy !== null || app.container_state !== "RUNNING"}
+          disabled={!admin || inFlight || busy !== null || app.container_state !== "RUNNING"}
           className="rounded-md border border-ink-600 bg-ink-800 px-3 py-1.5 text-xs text-ink-100 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {busy === "stop" ? "Stopping…" : "Stop"}
@@ -153,6 +155,7 @@ function AppRow({ app, onAction }: { app: ManagedApp; onAction: () => void }) {
 }
 
 export default function Applications({ selectedHostId }: { selectedHostId?: string } = {}) {
+  const admin = useAdmin();
   const [templates, setTemplates] = useState<TemplateListResponse | null>(null);
   const [apps, setApps] = useState<ManagedAppListResponse | null>(null);
   const [hosts, setHosts] = useState<{ id: string; hostname: string; status: string }[]>([]);
@@ -285,7 +288,7 @@ export default function Applications({ selectedHostId }: { selectedHostId?: stri
           </label>
           <button
             onClick={deployAction}
-            disabled={deploying || !hostId}
+            disabled={!admin || deploying || !hostId}
             className="rounded-md bg-signal-info px-4 py-1.5 text-sm font-medium text-ink-950 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {deploying ? "Requesting…" : "Deploy"}
@@ -314,7 +317,7 @@ export default function Applications({ selectedHostId }: { selectedHostId?: stri
             )}
             {activeOp.status === "SUCCEEDED" && (
               <p className="mt-1 text-xs text-signal-ok" data-testid="op-success">
-                Succeeded{activeOp.result?.http_ok === true ? " — application responding" : " — container running"}
+                Succeeded{activeOp.result?.http_ok === true ? " — application responding" : " — see reported container state below"}
                 {typeof activeOp.result?.app_url === "string" && (
                   <>
                     {" "}

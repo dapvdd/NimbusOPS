@@ -8,6 +8,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Applications from "../Applications";
+vi.mock('../../auth/Session', () => ({ useAdmin: () => true }));
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -133,6 +134,21 @@ describe("Applications — rendering", () => {
 });
 
 describe("Applications — deploy interaction", () => {
+  it("does not invent container running when successful result has no state", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/applications/deploy")) return Promise.resolve(jsonResponse({ operation_id: "op-no-state" }));
+      if (url.includes("/operations/op-no-state")) return Promise.resolve(jsonResponse({ id: "op-no-state", op_type: "DEPLOY", status: "SUCCEEDED", result: null }));
+      if (url.includes("/templates")) return Promise.resolve(jsonResponse(templates));
+      if (url.includes("/applications")) return Promise.resolve(jsonResponse({ applications: [], count: 0 }));
+      if (url.includes("/hosts")) return Promise.resolve(jsonResponse(hosts));
+      return Promise.resolve(jsonResponse({}, 404));
+    }));
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: /^deploy$/i }));
+    const result = await screen.findByTestId("op-success");
+    expect(result).toHaveTextContent("Succeeded");
+    expect(result).not.toHaveTextContent("container running");
+  });
   it("deploy click POSTs and shows queued/running progress then success", async () => {
     const deployBody = {
       operation_id: "op-new",

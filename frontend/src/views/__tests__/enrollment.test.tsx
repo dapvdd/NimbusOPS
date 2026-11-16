@@ -14,6 +14,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Servers from "../Servers";
+vi.mock('../../auth/Session', () => ({ useAdmin: () => true, useSession: () => null }));
 
 beforeEach(() => {
   localStorage.clear();

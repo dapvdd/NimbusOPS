@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { HealthResponse } from "../api/types";
 import { formatUtcTime } from "../lib/format";
 import { Sidebar } from "./Sidebar";
+import { useSession } from '../auth/Session';
 
 /**
  * Top bar with brand, health indicator, and primary navigation. Health is
@@ -26,6 +27,8 @@ function HealthDot({ state }: { state: ConnState }) {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const session = useSession();
+  const [logoutError,setLogoutError] = useState('');
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [conn, setConn] = useState<ConnState>("checking");
 
@@ -92,6 +95,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-4 text-xs text-ink-300">
+            {session?.user && <><span>{session.user.username} · {session.user.role}</span><button onClick={() => { void session.logout().catch(()=>setLogoutError('Logout failed. Please retry.')); }}>Log out</button>{logoutError && <span role="alert">{logoutError}</span>}</>}
             {conn === "ok" && health ? (
               <span className="flex items-center gap-2">
                 <HealthDot state={conn} />

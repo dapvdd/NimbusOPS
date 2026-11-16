@@ -44,6 +44,13 @@ const API_BASE = "/api/v1";
  * variable dies with the tab.
  */
 let operatorSessionToken: string | null = null;
+let csrfToken: string | null = null;
+
+export async function refreshCsrf(): Promise<void> {
+  const response = await fetch(`${API_BASE}/operators/session/csrf`, { credentials: 'same-origin', cache: 'no-store' });
+  if (!response.ok) throw new ApiFailure('http', 'Unable to establish a secure session.', response.status);
+  csrfToken = (await response.json()).csrf_token;
+}
 
 /** Test/visibility hook: the session token is intentionally not persisted. */
 export function currentSessionToken(): string | null {
@@ -98,12 +105,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     resp = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: { Accept: "application/json", ...authHeaders(), ...init?.headers },
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: "application/json", ...authHeaders(), ...(csrfToken && init?.method && init.method !== 'GET' ? {'X-CSRF-Token':csrfToken} : {}), ...init?.headers },
     });
   } catch {
     throw new ApiFailure("network", "Cannot reach the NimbusOps server.");
   }
   if (!resp.ok) {
+    if (resp.status === 401 && !path.includes('/login')) window.dispatchEvent(new Event('nimbusops:session-expired'));
     let message = `Server returned ${resp.status}`;
     try {
       const body = (await resp.json()) as ApiErrorBody | { detail?: unknown };
@@ -121,9 +131,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  browserLogin: async (username: string, password: string) => {
+    await refreshCsrf();
+    const result = await request<{ role: 'ADMIN' | 'VIEWER'; csrf_token: string }>('/operators/session/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
+    csrfToken = result.csrf_token;
+    operatorSessionToken = null;
+    return result;
+  },
+  browserLogout: async () => {
+    await refreshCsrf();
+    await request('/operators/session/logout', {method:'POST'});
+    csrfToken = null;
+    operatorSessionToken = null;
+  },
   health: () => request<HealthResponse>("/health"),
   listHosts: () => request<HostListResponse>("/hosts"),
   getHost: (id: string) => request<Host>(`/hosts/${encodeURIComponent(id)}`),
+  getHostInventory: (id: string) => request<import("./types").HostInventory>(`/hosts/${encodeURIComponent(id)}/inventory`),
   getHostMetrics: (id: string, limit = 120) =>
     request<HostMetricsResponse>(`/hosts/${encodeURIComponent(id)}/metrics?limit=${limit}`),
   // ---------------------------------------------------------------- Phase 2

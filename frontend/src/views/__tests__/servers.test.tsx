@@ -2,6 +2,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Servers from "../Servers";
+vi.mock('../../auth/Session', () => ({ useAdmin: () => true, useSession: () => null }));
 beforeEach(() => { localStorage.clear(); vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ hosts: [], count: 0 }) })); });
 afterEach(() => vi.unstubAllGlobals());
 it("keeps local simulations usable when the API fails", async () => {
