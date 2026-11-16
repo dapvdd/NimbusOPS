@@ -166,3 +166,25 @@ def test_save_identity_does_not_write_token_to_a_shared_temp_name(tmp_path):
 
     assert seen and seen[0] != str(p)
     assert seen[0].startswith(str(tmp_path))
+
+
+# ------------------------------------------------ S4-3 environment classification
+
+def test_config_accepts_valid_environment(tmp_path):
+    """Explicit NIMBUSOPS_AGENT_ENVIRONMENT value lands on Config.environment."""
+    cfg = Config(server_url="http://x", enrollment_token="t", environment="PUBLIC-CLOUD",
+                 state_file=tmp_path / "a.json")
+    assert cfg.environment == "PUBLIC-CLOUD"
+
+
+def test_config_rejects_invalid_environment(tmp_path):
+    """Unknown environment value is a ConfigError (never silently forwarded)."""
+    with pytest.raises(ConfigError):
+        Config(server_url="http://x", enrollment_token="t", environment="MARS",
+               state_file=tmp_path / "a.json")
+
+
+def test_config_environment_defaults_to_none(tmp_path):
+    """Without the operator setting, environment stays None (field omitted)."""
+    cfg = Config(server_url="http://x", enrollment_token="t", state_file=tmp_path / "a.json")
+    assert cfg.environment is None

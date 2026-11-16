@@ -44,6 +44,9 @@ class Config:
     )
     once: bool = False
     telemetry_only: bool = False
+    # S4-3: operator-set classification hint. None by default (field omitted
+    # from the enroll payload); validated against the server-side literal.
+    environment: str | None = None
 
     def __post_init__(self) -> None:
         if not self.server_url:
@@ -53,6 +56,10 @@ class Config:
         if self.enrollment_token and self.bootstrap_token:
             raise ConfigError(
                 "provide exactly one of enrollment_token or bootstrap_token"
+            )
+        if self.environment is not None and self.environment not in ("PRIVATE", "PUBLIC-CLOUD"):
+            raise ConfigError(
+                f"environment must be PRIVATE or PUBLIC-CLOUD: {self.environment!r}"
             )
         # Enrollment credentials are only needed for *fresh* enrollment. A
         # re-running agent with a persisted identity must start without one.
@@ -177,10 +184,15 @@ def delete_identity(path: pathlib.Path) -> None:
         pass
 
 
-def collect_host_info() -> dict:
-    """Genuine host metadata from psutil/platform (no fabrication)."""
+def collect_host_info(cfg: Config | None = None) -> dict:
+    """Genuine host metadata from psutil/platform (no fabrication).
+
+    S4-3: when the operator set NIMBUSOPS_AGENT_ENVIRONMENT (Config.environment),
+    the value rides along in the enroll payload — explicit operator input, never
+    an auto-detected trust decision.
+    """
     vm = psutil.virtual_memory()
-    return {
+    info: dict = {
         "agent_version": __version__,
         "platform": platform.system(),
         "platform_release": platform.release(),
@@ -188,3 +200,6 @@ def collect_host_info() -> dict:
         "total_memory_bytes": vm.total,
         "boot_time": None,  # Filled by collect_telemetry's psutil.boot_time().
     }
+    if cfg is not None and cfg.environment is not None:
+        info["environment"] = cfg.environment
+    return info

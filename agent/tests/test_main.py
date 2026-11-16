@@ -208,3 +208,79 @@ def test_python_m_nimbusops_agent_runs_main(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         runpy.run_module("nimbusops_agent", run_name="__main__")
     assert exc.value.code == 0
+
+
+# ------------------------------------------ S4-3 environment classification
+
+def test_ensure_enrolled_sends_environment_when_set(tmp_path, monkeypatch):
+    """Config.environment set → enroll payload carries it verbatim."""
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"host_id": "h-env", "agent_token": "agent-tok"})
+
+    monkeypatch.setattr(agent_main, "Sender", _sender_factory(handler, []))
+    cfg = Config(
+        server_url="http://test",
+        enrollment_token="tok",
+        environment="PUBLIC-CLOUD",
+        state_file=tmp_path / "a.json",
+    )
+    identity, created = ensure_enrolled(cfg)
+    assert created is True
+    assert bodies and bodies[0]["environment"] == "PUBLIC-CLOUD"
+
+
+def test_ensure_enrolled_omits_environment_when_unset(tmp_path, monkeypatch):
+    """No operator setting → the payload must NOT carry an environment field."""
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"host_id": "h-noenv", "agent_token": "agent-tok"})
+
+    monkeypatch.setattr(agent_main, "Sender", _sender_factory(handler, []))
+    cfg = Config(server_url="http://test", enrollment_token="tok", state_file=tmp_path / "a.json")
+    identity, created = ensure_enrolled(cfg)
+    assert created is True
+    assert bodies and "environment" not in bodies[0]
+
+
+def test_main_reads_environment_from_env_var(monkeypatch, tmp_path):
+    """NIMBUSOPS_AGENT_ENVIRONMENT flows into Config via main()."""
+    import os
+
+    from nimbusops_agent.config import save_identity
+
+    state = tmp_path / "agent.json"
+    save_identity(state, Identity(host_id="h1", agent_token="tok"))
+    monkeypatch.setenv("NIMBUSOPS_AGENT_SERVER_URL", "http://x")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", "")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_STATE_FILE", str(state))
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENVIRONMENT", "PUBLIC-CLOUD")
+
+    seen = {}
+
+    def _run_ok(cfg):
+        seen["environment"] = cfg.environment
+        return 0
+
+    monkeypatch.setattr(agent_main, "run", _run_ok)
+    assert agent_main.main([]) == 0
+    assert seen["environment"] == "PUBLIC-CLOUD"
+
+
+def test_main_rejects_invalid_environment_env_var(monkeypatch, tmp_path):
+    """An invalid NIMBUSOPS_AGENT_ENVIRONMENT must exit 2 cleanly."""
+    import os
+
+    from nimbusops_agent.config import save_identity
+
+    state = tmp_path / "agent.json"
+    save_identity(state, Identity(host_id="h1", agent_token="tok"))
+    monkeypatch.setenv("NIMBUSOPS_AGENT_SERVER_URL", "http://x")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", "")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_STATE_FILE", str(state))
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENVIRONMENT", "MARS")
+    assert agent_main.main([]) == 2

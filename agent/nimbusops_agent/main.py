@@ -59,7 +59,7 @@ def ensure_enrolled(cfg: Config) -> tuple[Identity, bool]:
             hostname=socket.gethostname(),
             enrollment_token=cfg.enrollment_token,
             bootstrap_token=cfg.bootstrap_token or None,
-            info=collect_host_info(),
+            info=collect_host_info(cfg),
         )
     finally:
         sender.close()
@@ -207,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             once=args.once,
             telemetry_only=args.telemetry_only,
+            environment=(os.environ.get("NIMBUSOPS_AGENT_ENVIRONMENT", "").strip() or None),
         )
     except ConfigError as exc:
         print(f"nimbusops-agent: invalid configuration: {exc}", file=sys.stderr)
