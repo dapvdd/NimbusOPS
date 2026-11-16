@@ -6,7 +6,10 @@ Verification resolves the operator and enforces expiry + revocation + role.
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request, Response
+import secrets
+import hashlib
+import hmac
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -23,6 +26,44 @@ from ..schemas import (
 )
 
 router = APIRouter(prefix="/api/v1/operators")
+
+SESSION_COOKIE = "nimbusops_session"
+CSRF_COOKIE = "nimbusops_csrf"
+
+
+def _csrf_value(seed: str) -> str:
+    settings = get_settings()
+    key = settings.token_pepper or settings.enrollment_token
+    if not key:
+        raise ApiError(503, ErrorCode.UNAUTHORIZED, "session signing key is not configured")
+    return hmac.new(key.encode(), seed.encode(), hashlib.sha256).hexdigest()
+
+
+def check_csrf(request: Request) -> None:
+    origin = request.headers.get("origin")
+    allowed = [x.strip() for x in get_settings().browser_origins.split(",")]
+    if origin and origin not in allowed:
+        raise ApiError(403, ErrorCode.OPERATOR_FORBIDDEN, "untrusted browser origin")
+    seed = request.cookies.get(SESSION_COOKIE) or request.cookies.get(CSRF_COOKIE, "")
+    supplied = request.headers.get("x-csrf-token", "")
+    if not seed or not supplied or not secrets.compare_digest(_csrf_value(seed), supplied):
+        raise ApiError(403, ErrorCode.OPERATOR_FORBIDDEN, "CSRF validation failed")
+
+
+def resolve_request(request: Request, db: Session, authorization: str | None):
+    cookie = request.cookies.get(SESSION_COOKIE)
+    if cookie:
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            check_csrf(request)
+        return _resolve_session(db, "Bearer " + cookie)
+    return _resolve_session(db, authorization)
+
+
+def require_read(request: Request, db: Session = Depends(get_db)) -> None:
+    if request.url.path in ("/api/v1/health", "/api/v1/ready", "/api/v1/readiness"):
+        return
+    if request.method == "GET":
+        resolve_request(request, db, request.headers.get("authorization"))
 
 
 # -------------------------------------------------------------------------
@@ -112,10 +153,11 @@ def require_operator(role: str | None = None):
     """FastAPI dependency factory: operator auth, optionally role-gated (O1)."""
 
     def _dep(
+        request: Request,
         authorization: str | None = Header(default=None),
         db: Session = Depends(get_db),
     ) -> Operator:
-        op, _sess = _resolve_session(db, authorization)
+        op, _sess = resolve_request(request, db, authorization)
         if role is not None and op.role != role:
             raise ApiError(403, ErrorCode.OPERATOR_FORBIDDEN, f"operator role {op.role!r} may not perform this action")
         return op
@@ -143,7 +185,12 @@ def login(req: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     return LoginResponse(session_token=token, operator_id=op.id, role=op.role, expires_at=expires)
 
 
-@router.post("/logout")
+def legacy_cookie_guard(request: Request) -> None:
+    if request.cookies.get(SESSION_COOKIE):
+        check_csrf(request)
+
+
+@router.post("/logout", dependencies=[Depends(legacy_cookie_guard)])
 def logout(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
@@ -161,3 +208,38 @@ def logout(
 @router.get("/me", response_model=MeResponse)
 def me(op: Operator = Depends(require_operator())) -> MeResponse:
     return MeResponse(operator_id=op.id, username=op.username, role=op.role)
+
+
+@router.get("/session/csrf")
+def browser_csrf(request: Request, response: Response) -> dict:
+    seed = request.cookies.get(SESSION_COOKIE) or request.cookies.get(CSRF_COOKIE) or generate_agent_token()
+    if not request.cookies.get(SESSION_COOKIE):
+        response.set_cookie(CSRF_COOKIE, seed, httponly=True, secure=get_settings().session_cookie_secure, samesite="strict", path="/api/v1", max_age=3600)
+    response.headers["Cache-Control"] = "no-store"
+    return {"csrf_token": _csrf_value(seed)}
+
+
+@router.post("/session/login")
+def browser_login(req: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
+    check_csrf(request)
+    # Reuse the established password/rate-limit/session implementation.
+    result = login(req, db)
+    old = request.cookies.get(SESSION_COOKIE)
+    if old:
+        previous = db.scalar(select(OperatorSession).where(OperatorSession.token_hash == hash_session_token(old)))
+        if previous:
+            previous.revoked_at = _now()
+            db.commit()
+    response.set_cookie(SESSION_COOKIE, result.session_token, httponly=True, secure=get_settings().session_cookie_secure, samesite="strict", path="/api/v1", max_age=get_settings().operator_session_ttl_seconds)
+    response.headers["Cache-Control"] = "no-store"
+    return {"role": result.role, "expires_at": result.expires_at, "csrf_token": _csrf_value(result.session_token)}
+
+
+@router.post("/session/logout")
+def browser_logout(request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
+    check_csrf(request)
+    logout("Bearer " + request.cookies.get(SESSION_COOKIE, ""), db)
+    response.delete_cookie(SESSION_COOKIE, path="/api/v1")
+    response.delete_cookie(CSRF_COOKIE, path="/api/v1")
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "ok"}

@@ -84,6 +84,11 @@ def test_start_stop_require_docker_enabled(client, online_host):
     dep_id = dep["deployment_id"]
     # Disable Docker again → start/stop blocked.
     assert _patch_docker(client, admin, host_id, False).status_code == 200
+    from sqlalchemy import select
+    from backend.app.models import DeploymentOperation
+
+    with _db() as db:
+        before = set(db.scalars(select(DeploymentOperation.id)).all())
     for action in ("start", "stop"):
         resp = client.post(
             f"/api/v1/applications/{dep_id}/{action}",
@@ -91,6 +96,8 @@ def test_start_stop_require_docker_enabled(client, online_host):
         )
         assert resp.status_code == 403, (action, resp.text)
         assert resp.json()["error"]["code"] == "DOCKER_NOT_AUTHORIZED"
+    with _db() as db:
+        assert set(db.scalars(select(DeploymentOperation.id)).all()) == before
 
 
 def test_heartbeat_carries_docker_enabled(client, online_host):

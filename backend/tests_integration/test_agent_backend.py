@@ -96,8 +96,13 @@ def test_full_agent_to_backend_flow(server_url):
     assert row["memory_total_bytes"] == telemetry["memory_total_bytes"]
     assert row["disk_total_bytes"] == telemetry["disk_total_bytes"]
 
-    # 4. Public API exposes it with honest status.
+    # 4. Human-authenticated API exposes it with honest status.
     public = httpx.Client(base_url=server)
+    from backend.scripts.create_operator import create_operator
+    create_operator('integration-reader', 'integration-test-password', 'VIEWER')
+    session = public.post('/api/v1/operators/login', json={'username':'integration-reader','password':'integration-test-password'})
+    assert session.status_code == 200
+    public.headers['Authorization'] = 'Bearer ' + session.json()['session_token']
     host = public.get(f"/api/v1/hosts/{host_id}").json()
     assert host["status"] == "ONLINE"
     assert host["latest_metrics"]["cpu_percent"] == pytest.approx(telemetry["cpu_percent"])

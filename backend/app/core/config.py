@@ -45,6 +45,10 @@ class Settings(BaseSettings):
 
     # Phase 3B (O1 accepted): operator session TTL in seconds (default 12h).
     operator_session_ttl_seconds: int = 43200
+    session_cookie_secure: bool = True
+    # Exact browser origins allowed to send cookie-authenticated mutations.
+    # Keep in sync with the UI origin; never use a wildcard.
+    browser_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     # Phase 3B (O4 accepted): grace period for rotated agent credentials.
     credential_rotation_grace_seconds: int = 300

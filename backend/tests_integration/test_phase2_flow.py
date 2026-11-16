@@ -110,8 +110,20 @@ def http_post(path: str, payload: dict | None, headers: dict | None = None) -> t
 
 
 def http_get(path: str) -> tuple[int, dict]:
+    from backend.app.core.db import SessionLocal
+    from backend.app.core.security import generate_agent_token, hash_session_token
+    from backend.app.models import Operator, OperatorSession
+    from datetime import datetime, timedelta, timezone
+    token = generate_agent_token()
+    with SessionLocal() as db:
+        op = Operator(username='read-' + token[:12], role='VIEWER', password_hash='not-a-login-hash')
+        db.add(op)
+        db.flush()
+        db.add(OperatorSession(operator_id=op.id, token_hash=hash_session_token(token), expires_at=datetime.now(timezone.utc)+timedelta(minutes=10)))
+        db.commit()
+    request = urllib.request.Request(f"{BASE_URL}{path}", headers={"Authorization":f"Bearer {token}"})
     try:
-        with urllib.request.urlopen(f"{BASE_URL}{path}", timeout=10) as r:
+        with urllib.request.urlopen(request, timeout=10) as r:
             return r.status, json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode())

@@ -91,3 +91,31 @@ def online_host(client, enroll_token):
 def auth_headers(host_id: str, token: str) -> dict:
     """Plain helper (NOT a fixture): legacy tests import and call this directly."""
     return {"X-Host-Id": host_id, "Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(autouse=True)
+def authenticated_reads(request, client, db_session):
+    """Authenticate only GET requests in existing read-contract test modules."""
+    read_modules = {"test_hosts_telemetry", "test_host_pagination", "test_operation_history", "test_host_environment", "test_deployments", "test_host_lifecycle", "test_inventory_api"}
+    if request.module.__name__.rsplit('.', 1)[-1] not in read_modules:
+        yield
+        return
+    from datetime import datetime, timedelta, timezone
+    from backend.app.models import Operator, OperatorSession
+    from backend.app.core.security import generate_agent_token, hash_session_token
+
+    token = generate_agent_token()
+    op = Operator(username="read-fixture", password_hash="not-a-login-hash", role="VIEWER")
+    db_session.add(op)
+    db_session.flush()
+    db_session.add(OperatorSession(operator_id=op.id, token_hash=hash_session_token(token), expires_at=datetime.now(timezone.utc)+timedelta(hours=1)))
+    db_session.commit()
+    original = client.get
+
+    def get(url, **kwargs):
+        kwargs['headers'] = {'Authorization': f'Bearer {token}', **kwargs.get('headers', {})}
+        return original(url, **kwargs)
+
+    client.get = get
+    yield
+    client.get = original
