@@ -1,0 +1,24 @@
+# INERT EXAMPLE — substitute every @TOKEN@ before installing.
+# TLS belongs in front of this listener. The upstream is loopback-only.
+[Unit]
+Description=NimbusOps web listener
+After=network-online.target nimbusops-api.service
+Wants=network-online.target
+StartLimitBurst=3
+StartLimitIntervalSec=300
+
+[Service]
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+ExecStart=@CADDY_BIN@ run --config @CONFIG_DIR@/Caddyfile --adapter caddyfile
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
