@@ -3,11 +3,13 @@ import { useState } from "react";
 export interface CopyFieldProps {
   value: string;
   label?: string;
+  secret?: boolean;
   className?: string;
 }
 
-export function CopyField({ value, label, className = "" }: CopyFieldProps) {
+export function CopyField({ value, label, secret = false, className = "" }: CopyFieldProps) {
   const [copied, setCopied] = useState(false);
+  const [revealed, setRevealed] = useState(!secret);
 
   const handleCopy = async () => {
     try {
@@ -26,8 +28,17 @@ export function CopyField({ value, label, className = "" }: CopyFieldProps) {
       {label && <label className="block text-xs font-medium text-ink-300">{label}</label>}
       <div className="flex items-center gap-2">
         <code className="flex-1 break-all rounded-lg border border-border-strong bg-surface-0 p-3 font-mono text-sm text-ink-100 select-all">
-          {value}
+          {secret && !revealed ? "•".repeat(Math.min(value.length, 32)) : value}
         </code>
+        {secret && (
+          <button
+            type="button"
+            onClick={() => setRevealed(!revealed)}
+            className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-border-strong bg-surface-3 px-3 py-2 text-xs font-medium text-ink-100 transition-colors hover:bg-ink-700 focus-visible:outline-2 focus-visible:outline-signal-info"
+          >
+            {revealed ? "Hide" : "Show"}
+          </button>
+        )}
         <button
           type="button"
           onClick={handleCopy}

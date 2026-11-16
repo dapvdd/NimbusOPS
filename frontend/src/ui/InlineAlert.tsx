@@ -2,8 +2,10 @@ import React from "react";
 
 export interface InlineAlertProps {
   type?: "info" | "success" | "warn" | "error";
+  variant?: "info" | "success" | "warn" | "bad" | "error";
   title?: string;
-  message: string;
+  message?: string;
+  children?: React.ReactNode;
   action?: React.ReactNode;
   className?: string;
 }
@@ -29,12 +31,16 @@ const STYLES = {
 
 export function InlineAlert({
   type = "info",
+  variant,
   title,
   message,
+  children,
   action,
   className = "",
 }: InlineAlertProps) {
-  const style = STYLES[type];
+  const effectiveVariant = variant === "bad" ? "error" : (variant || type || "info");
+  const style = STYLES[effectiveVariant as keyof typeof STYLES] || STYLES.info;
+  const content = children || message;
 
   return (
     <div
@@ -43,7 +49,7 @@ export function InlineAlert({
     >
       <div className="space-y-1">
         {title && <p className="font-semibold">{title}</p>}
-        <p className="text-ink-100">{message}</p>
+        {content && <div className="text-ink-100">{content}</div>}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>
