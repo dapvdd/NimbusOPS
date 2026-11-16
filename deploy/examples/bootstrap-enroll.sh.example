@@ -9,8 +9,9 @@
 #   NIMBUSOPS_INSTALL_DIR  install root (contains agent/ and venv/)
 #   NIMBUSOPS_SERVER_URL   control-plane base URL
 #   NIMBUSOPS_TOKEN_FILE   bootstrap token file, 0600, owner-only
-#   NIMBUSOPS_STATE_FILE   identity file path (must not exist yet)
+#   NIMBUSOPS_STATE_FILE   identity file path (must not exist for enroll; must exist for reenroll)
 # Optional:
+#   NIMBUSOPS_AGENT_ACTION enroll (default) or reenroll
 #   NIMBUSOPS_AGENT_MODE   telemetry-only (default) or executor
 #   NIMBUSOPS_PYTHON       interpreter (default: $NIMBUSOPS_INSTALL_DIR/venv/bin/python)
 #
@@ -23,6 +24,7 @@ set -eu
 : "${NIMBUSOPS_TOKEN_FILE:?set NIMBUSOPS_TOKEN_FILE}"
 : "${NIMBUSOPS_STATE_FILE:?set NIMBUSOPS_STATE_FILE}"
 python=${NIMBUSOPS_PYTHON:-$NIMBUSOPS_INSTALL_DIR/venv/bin/python}
+action=${NIMBUSOPS_AGENT_ACTION:-enroll}
 mode=${NIMBUSOPS_AGENT_MODE:-telemetry-only}
 
 [ -f "$NIMBUSOPS_TOKEN_FILE" ] || { echo "bootstrap token file missing" >&2; exit 2; }
@@ -31,16 +33,37 @@ mode=${NIMBUSOPS_AGENT_MODE:-telemetry-only}
   echo "bootstrap token file must be 0600 and owned by this account" >&2
   exit 2
 }
-[ ! -e "$NIMBUSOPS_STATE_FILE" ] || {
-  echo "identity already exists; refusing to replace host identity" >&2
-  exit 2
-}
+
+case $action in
+  enroll)
+    [ ! -e "$NIMBUSOPS_STATE_FILE" ] || {
+      echo "identity already exists; refusing to replace host identity" >&2
+      exit 2
+    }
+    action_args=""
+    ;;
+  reenroll)
+    [ -f "$NIMBUSOPS_STATE_FILE" ] || {
+      echo "identity file does not exist; cannot re-enroll non-existent host" >&2
+      exit 2
+    }
+    action_args="--reenroll"
+    ;;
+  *)
+    echo "invalid NIMBUSOPS_AGENT_ACTION: $action" >&2
+    exit 2
+    ;;
+esac
 
 case $mode in
   telemetry-only) set -- --telemetry-only ;;
   executor) set -- ;;
   *) echo "invalid NIMBUSOPS_AGENT_MODE: $mode" >&2; exit 2 ;;
 esac
+
+if [ -n "$action_args" ]; then
+  set -- "$@" $action_args
+fi
 
 exec "$python" -m nimbusops_agent "$@" \
   --server-url "$NIMBUSOPS_SERVER_URL" \
