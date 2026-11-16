@@ -25,14 +25,10 @@ it("adds and removes a clearly labeled simulation without mutation requests", as
   expect(screen.queryByText("demo-edge")).not.toBeInTheDocument();
   expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
 });
-it("existing-server enrollment requires login, then issues a one-time token", async () => {
-  // Phase 3B: the flow is implemented — but gated behind operator login.
+it("existing-server enrollment links to onboarding wizard", async () => {
   render(<MemoryRouter><Servers /></MemoryRouter>);
   await screen.findByText("No real servers registered");
   fireEvent.click(screen.getByText("Add Server"));
   fireEvent.click(screen.getByText("Existing server"));
-  // Login form appears first; no token issuance UI before auth.
-  expect(screen.getByLabelText("Username")).toBeInTheDocument();
-  expect(screen.queryByLabelText("Hostname")).not.toBeInTheDocument();
-  expect(screen.queryByText(/bootstrap token/i)).not.toBeInTheDocument();
+  expect(screen.getByText("Start Enrollment")).toBeInTheDocument();
 });

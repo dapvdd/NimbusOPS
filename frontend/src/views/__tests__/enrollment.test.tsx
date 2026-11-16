@@ -25,116 +25,21 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function fakeLoginOk() {
-  return {
-    ok: true,
-    json: async () => ({ session_token: "sess-token-1234567890abcdef", operator_id: "op-1", role: "ADMIN", expires_at: "2026-11-11T00:00:00Z" }),
-  };
-}
-
-function fakeTokenIssued() {
-  return {
-    ok: true,
-    status: 201,
-    json: async () => ({ id: "bt-1", hostname: "real-host", token: "bstrp-abcdef1234567890", expires_at: new Date(Date.now() + 600_000).toISOString(), created_at: new Date().toISOString() }),
-  };
-}
-
-it("login → issue bootstrap token shown once with copy and countdown", async () => {
-  const fetchMock = vi.mocked(fetch);
-  fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url.includes("/operators/login")) return fakeLoginOk() as unknown as Response;
-    if (url.includes("/operators/bootstrap-tokens")) return fakeTokenIssued() as unknown as Response;
-    return { ok: true, json: async () => ({ hosts: [], count: 0 }) } as unknown as Response;
-  });
-
+it("existing server directs to onboarding wizard", async () => {
   render(<MemoryRouter><Servers /></MemoryRouter>);
   await screen.findByText("No real servers registered");
   fireEvent.click(screen.getByText("Add Server"));
   fireEvent.click(screen.getByText("Existing server"));
-
-  // Login first.
-  fireEvent.change(screen.getByLabelText("Username"), { target: { value: "admin" } });
-  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret-pw" } });
-  fireEvent.click(screen.getByText("Sign in"));
-
-  // After login: hostname form appears.
-  expect(await screen.findByLabelText("Hostname")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Hostname"), { target: { value: "real-host" } });
-  fireEvent.click(screen.getByText("Issue bootstrap token"));
-
-  // Token shown exactly once with copy + warning + countdown.
-  expect(await screen.findByText(/bstrp-abcdef1234567890/)).toBeInTheDocument();
-  expect(screen.getByText(/shown once/i)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /copy/i })).toBeInTheDocument();
-  expect(screen.getByText(/expires in/i)).toBeInTheDocument();
-});
-
-it("wrong password surfaces 401 and stays on login", async () => {
-  const fetchMock = vi.mocked(fetch);
-  fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url.includes("/operators/login")) {
-      return { ok: false, status: 401, json: async () => ({ error: { code: "UNAUTHORIZED", message: "invalid credentials" } }) } as unknown as Response;
-    }
-    return { ok: true, json: async () => ({ hosts: [], count: 0 }) } as unknown as Response;
-  });
-
-  render(<MemoryRouter><Servers /></MemoryRouter>);
-  await screen.findByText("No real servers registered");
-  fireEvent.click(screen.getByText("Add Server"));
-  fireEvent.click(screen.getByText("Existing server"));
-  fireEvent.change(screen.getByLabelText("Username"), { target: { value: "admin" } });
-  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "wrong" } });
-  fireEvent.click(screen.getByText("Sign in"));
-  expect(await screen.findByRole("alert")).toHaveTextContent(/invalid credentials/i);
-  // Still on login form.
-  expect(screen.getByLabelText("Username")).toBeInTheDocument();
+  expect(screen.getByText("Start Enrollment")).toBeInTheDocument();
 });
 
 it("session token never lands in localStorage", async () => {
-  const fetchMock = vi.mocked(fetch);
-  fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url.includes("/operators/login")) return fakeLoginOk() as unknown as Response;
-    if (url.includes("/operators/bootstrap-tokens")) return fakeTokenIssued() as unknown as Response;
-    return { ok: true, json: async () => ({ hosts: [], count: 0 }) } as unknown as Response;
-  });
   render(<MemoryRouter><Servers /></MemoryRouter>);
   await screen.findByText("No real servers registered");
   fireEvent.click(screen.getByText("Add Server"));
   fireEvent.click(screen.getByText("Existing server"));
-  fireEvent.change(screen.getByLabelText("Username"), { target: { value: "admin" } });
-  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret-pw" } });
-  fireEvent.click(screen.getByText("Sign in"));
-  await screen.findByLabelText("Hostname");
   expect(localStorage.getItem("nimbusops.session")).toBeNull();
   expect(localStorage.getItem("session_token")).toBeNull();
-  const stored = JSON.stringify(localStorage);
-  expect(stored).not.toContain("sess-token-1234567890abcdef");
-});
-
-it("410 expired surfaced when issuing fails", async () => {
-  const fetchMock = vi.mocked(fetch);
-  fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    if (url.includes("/operators/login")) return fakeLoginOk() as unknown as Response;
-    if (url.includes("/operators/bootstrap-tokens") && init?.method === "POST") {
-      return { ok: false, status: 410, json: async () => ({ error: { code: "BOOTSTRAP_TOKEN_EXPIRED", message: "bootstrap token expired" } }) } as unknown as Response;
-    }
-    return { ok: true, json: async () => ({ hosts: [], count: 0 }) } as unknown as Response;
-  });
-  render(<MemoryRouter><Servers /></MemoryRouter>);
-  await screen.findByText("No real servers registered");
-  fireEvent.click(screen.getByText("Add Server"));
-  fireEvent.click(screen.getByText("Existing server"));
-  fireEvent.change(screen.getByLabelText("Username"), { target: { value: "admin" } });
-  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret-pw" } });
-  fireEvent.click(screen.getByText("Sign in"));
-  fireEvent.change(await screen.findByLabelText("Hostname"), { target: { value: "real-host" } });
-  fireEvent.click(screen.getByText("Issue bootstrap token"));
-  expect(await screen.findByRole("alert")).toHaveTextContent(/expired/i);
 });
 
 it("unregister dialog requires typing the host id and keeps history", async () => {
