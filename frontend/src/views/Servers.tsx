@@ -49,7 +49,7 @@ export default function Servers() {
     {error && <p role="alert" className="rounded-lg border border-signal-bad p-4 text-signal-bad">Real infrastructure unavailable: {error}. Simulations below are local only.</p>}
     <h2 className="text-xs uppercase tracking-widest text-ink-300">Real infrastructure · {hosts.length}</h2>
     {!loading && !error && hosts.length === 0 && <p>No real servers registered</p>}
-    <div className="grid gap-4 xl:grid-cols-2">{hosts.filter(h => matches(h.hostname) && envMatches(h)).map(h => <article key={h.id} className="rounded-xl border border-ink-700 bg-ink-850 p-5"><div className="flex items-center justify-between gap-3"><Link className="font-semibold text-lg text-signal-info" to={`/hosts/${h.id}`}>{h.hostname}</Link><StatusBadge status={h.status} /></div><p className="my-4 text-xs text-ink-300"><span className="mr-2 rounded-full border border-ink-600 px-2 py-0.5">{hostEnv(h)}</span>REAL · {h.enrollment_status}{h.docker_enabled ? " · Docker enabled" : ""}</p><div className="grid grid-cols-3 gap-2"><MetricCard label="CPU" percent={h.latest_metrics?.cpu_percent ?? null} /><MetricCard label="RAM" percent={h.latest_metrics?.memory_used_percent ?? null} /><MetricCard label="Disk" percent={h.latest_metrics?.disk_used_percent ?? null} /></div>{admin && <button className="mt-4 text-sm text-signal-bad" aria-label={`Unregister ${h.hostname}`} onClick={() => setRemoving({ id: h.id, name: h.hostname })}>Unregister</button>}</article>)}</div>
+    <div className="grid gap-4 xl:grid-cols-2">{hosts.filter(h => matches(h.hostname) && envMatches(h)).map(h => <article key={h.id} className={`rounded-xl border p-5 ${h.is_revoked ? "border-signal-bad/40 bg-signal-bad/5" : "border-ink-700 bg-ink-850"}`}><div className="flex items-center justify-between gap-3"><Link className="font-semibold text-lg text-signal-info" to={`/hosts/${h.id}`}>{h.hostname}</Link><StatusBadge status={h.status} /></div><p className="my-4 text-xs text-ink-300"><span className={`mr-2 rounded-full border px-2 py-0.5 ${h.is_revoked ? "border-signal-bad/40 text-signal-bad" : "border-ink-600"}`}>{h.is_revoked ? "REVOKED" : "ACTIVE"}</span><span className="mr-2 rounded-full border border-ink-600 px-2 py-0.5">{hostEnv(h)}</span>REAL · {h.enrollment_status}{h.docker_enabled ? " · Docker enabled" : ""}</p><div className="grid grid-cols-3 gap-2"><MetricCard label="CPU" percent={h.latest_metrics?.cpu_percent ?? null} /><MetricCard label="RAM" percent={h.latest_metrics?.memory_used_percent ?? null} /><MetricCard label="Disk" percent={h.latest_metrics?.disk_used_percent ?? null} /></div>{admin && (h.is_revoked ? <ReenrollButton host={h} /> : <button className="mt-4 text-sm text-signal-bad" aria-label={`Unregister ${h.hostname}`} onClick={() => setRemoving({ id: h.id, name: h.hostname })}>Unregister</button>)}</article>)}</div>
     <section className="rounded-xl border border-amber-400/30 bg-amber-400/5 p-5"><h2 className="font-semibold text-amber-300">SIMULATED · Local demo registry</h2><p className="mt-2 text-sm text-ink-300">These servers are browser-only demonstrations. They have no agent or Docker access.</p><div className="mt-5 grid gap-4 xl:grid-cols-2">{sim.filter(h => matches(h.name)).map(h => <article key={h.id} className="rounded-lg border border-ink-600 bg-ink-900 p-5"><Link className="text-lg font-semibold text-signal-info" to={`/servers/${h.id}`}>{h.name}</Link><p className="my-3 text-xs text-amber-300">{h.environment} · SIMULATED ONLINE</p><p className="text-sm text-ink-300">Synthetic preview · CPU {10 + h.seed % 60}% · RAM {20 + h.seed % 50}%</p>{admin && <button className="mt-4 text-sm text-signal-bad" aria-label={`Remove ${h.name}`} onClick={() => { if (admin) setRemoving(h); }}>Remove</button>}</article>)}</div>{sim.length === 0 && <p className="mt-4 text-sm">No simulated servers. Add one to explore the dashboard.</p>}</section>
     {query && !hosts.some(h => matches(h.hostname)) && !sim.some(h => matches(h.name)) && <p>No servers match your search.</p>}
     {adding && <section aria-label="Add server" className="rounded-xl border border-signal-info bg-ink-850 p-6"><h2 className="text-xl font-semibold">Add server</h2><div className="my-4 flex gap-4"><button onClick={() => setReal(false)} aria-pressed={!real}>Simulated demo server</button><button onClick={() => setReal(true)} aria-pressed={real}>Existing server</button></div>{real ? <EnrollFlow onDone={() => { setAdding(false); setReal(false); }} /> : <form className="space-y-4" onSubmit={e => { e.preventDefault(); try { addSimServer(name, environment); setAdding(false); setName(""); } catch (err) { setFormError((err as Error).message); } }}><label className="block">Server name<input autoFocus className="ml-3 rounded border border-ink-600 bg-ink-900 p-2" value={name} onChange={e => setName(e.target.value)} maxLength={64} /></label><label className="block">Environment<select className="ml-3 rounded bg-ink-900 p-2" value={environment} onChange={e => setEnvironment(e.target.value as SimEnvironment)}>{["SIMULATED-DEV", "SIMULATED-STAGING", "SIMULATED-PROD"].map(v => <option key={v}>{v}</option>)}</select></label>{formError && <p role="alert">{formError}</p>}<button className="rounded bg-signal-info px-4 py-2 text-ink-950">Create simulated server</button></form>}<button className="mt-4 text-ink-300" onClick={() => setAdding(false)}>Cancel</button></section>}
@@ -175,4 +175,60 @@ function UnregisterDialog({ host, onClose }: { host: { id: string; name: string 
       <button onClick={onClose}>Cancel</button>
     </div>
   </section>;
+}
+
+/**
+ * S4-1 (Phase C): one-time re-enroll bootstrap for a revoked/lost host.
+ *
+ * Issues POST /hosts/{id}/re-enroll exactly once per click; shows the token
+ * once with a copy field and expiry countdown. Failures surface typed
+ * messages (409 consumed, 410 expired, 401/403 auth problems) — never a
+ * generic "something went wrong".
+ */
+function ReenrollButton({ host }: { host: Host }) {
+  const [issued, setIssued] = useState<{ token: string; expiresAt: string } | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const issue = async () => {
+    if (busy || issued) return;
+    setBusy(true);
+    setError("");
+    setCopied(false);
+    try {
+      const t = await api.issueReenrollBootstrap(host.id);
+      setIssued({ token: t.bootstrap_token, expiresAt: t.expires_at });
+    } catch (err) {
+      setError(err instanceof ApiFailure ? typedReenrollError(err) : "Re-enroll failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (issued) {
+    return <div className="mt-4 space-y-2 rounded-lg border border-signal-info/40 bg-ink-900 p-3">
+      <p className="text-xs font-semibold text-amber-300">Bootstrap token for {host.hostname} — shown once. Copy it now.</p>
+      <code className="block break-all rounded border border-ink-600 bg-ink-950 p-2 font-mono text-xs">{issued.token}</code>
+      <p data-testid="reenroll-countdown" className="text-xs text-ink-300">Expires in {countdownLabel(issued.expiresAt)}</p>
+      <button className="rounded bg-signal-info px-3 py-1.5 text-xs text-ink-950" onClick={() => { void navigator.clipboard?.writeText(issued.token).then(() => setCopied(true)).catch(() => setCopied(false)); }}>Copy token</button>
+      {copied && <p role="status" className="text-xs">Copied to clipboard.</p>}
+    </div>;
+  }
+
+  return <div className="mt-4">
+    <button className="text-sm text-signal-info" aria-label={`Re-enroll ${host.hostname}`} disabled={busy} onClick={() => void issue()}>
+      Issue re-enroll token
+    </button>
+    {error && <p role="alert" className="mt-1 text-xs text-signal-bad">{error}</p>}
+  </div>;
+}
+
+/** Typed error copy per re-enroll failure mode (409/410/401/403). */
+function typedReenrollError(err: ApiFailure): string {
+  if (err.status === 409) return "This re-enroll token was already used. Issue a fresh one.";
+  if (err.status === 410) return "The re-enroll token expired. Issue a fresh one.";
+  if (err.status === 403) return "Your session cannot issue re-enroll tokens (ADMIN required).";
+  if (err.status === 401) return "Session expired. Sign in again, then retry.";
+  return err.message || "Re-enroll failed.";
 }
