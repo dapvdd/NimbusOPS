@@ -346,6 +346,8 @@ The core engine and protocols above are specified for implementation planning. A
 | G6 Packaging/support | Approve Ubuntu24.04 x64, Windows Server2022 x64, pinned artifact/runtime/dependency manifest and trusted distribution owner | real OS certification |
 | G7 Test and deployment targets | Explicit disposable hosts/subscription/RG/VM allowlist, privileges/budget and test window | real OS/Azure tests; never inferred from design approval |
 
+Gate resolution status after conditional approval (2026-11-17): G1/G2/G3/G4/G5 mechanisms and contracts are decided in ADR-5.2/5.3/5.4/5.1; G6 matrix and artifact rules are fixed in ADR-5.5; G7 policy and classes are fixed in ADR-5.6. What remains operator-gated is only concrete enablement evidence (exact digests recorded at packaging, tenant/audience configuration, disposable target selection and budget), never further design work. Candidate commit handling is fixed in ADR-5.7.
+
 Absent a gate, adapter reports setup-required with actionable instructions; it does not pretend to provision. Designer defaults (timeouts/concurrency/TTL/retention, supported OS and first vertical slice) need confirmation with the design, not live changes now.
 
 ## 15. Normative protocol clarifications after independent review
@@ -400,6 +402,18 @@ Azure binding must be refreshed by authoritative ARM read at validation, immedia
 
 Replacement grant issuance requires authenticated manager STATUS receipt binding same candidate_id/hash and dispatch to PREPARED with no committed result, DB proof that no grant/candidate commit exists, and transactional revocation of old unconsumed grant. Enrollment and replacement serialize on the same attempt/grant row; a delayed old-grant request either commits first (replacement returns commit status) or is rejected after revocation. A missing/uncertain journal or prior admission does not prove no enrollment: reconcile, never mint blindly. Lost response after a committed enrollment uses the persisted candidate and same-grant safe metadata replay, not replacement. These bindings/denials are mock-testable before real Azure enablement.
 
+## 16. ADR index (final decisions from conditional approval)
+
+| ADR | Decision |
+|---|---|
+| ADR-5.1 | Windows persistence: pinned WinSW-x64 2.12.0 (re-confirm tag/digest at packaging), MIT, digest+Authenticode provenance in release manifest; npm wrapper rejected; Task Scheduler rejected |
+| ADR-5.2 | Windows manager: named pipe `\\.\pipe\nimbusops-manager-v1`, worker-SID-only DACL, impersonation-based peer SID verification, admission-receipt + backend CAS serialization on revocation_revision/cancellation; receipt TTL never implies closure |
+| ADR-5.3 | GENERIC_LINUX: SSH Ed25519 pinned host key, dedicated management account + fixed sudoers for pinned manager/installer only, stdin JSON framing, journaled disconnect recovery, no inbound listener, digest-verified bootstrap transfer |
+| ADR-5.4 | AZURE_VM: Managed Run Command API ≥2023-03-01, named resource correlation, no secrets in script/params/protectedParameters/blobs, system-assigned identity IMDS bootstrap with nbf/clock-leeway and non-workload token rejection, authoritative ARM read per mutation authorization, both runCommands read actions + write pinned, manager RPCs under workload-identity manager-auth router |
+| ADR-5.5 | OS matrix: Ubuntu 24.04 LTS x64 + Windows Server 2022 x64 (2025 same codepath, certified only if tested), CPython 3.12 pinned, digest-verified immutable artifacts, support matrix is versioned config |
+| ADR-5.6 | Test classes A (unit/contract) → D (real Azure); fresh snapshot per real run; production and dev machines never targets; per-run recorded authorization; remaining G6/G7 items are concrete evidence, not design |
+| ADR-5.7 | 699883e/49029a9: port mechanisms only with regression tests against audit defects (old-identity restore, helper heartbeat, stale Sender, swallowed ACL); no wholesale cherry-pick |
+
 ## Design-work checklist
 
 - [x] Read selected approach, global architecture playbook and baseline source; preserve active UX work.
@@ -408,5 +422,7 @@ Replacement grant issuance requires authenticated manager STATUS receipt binding
 - [x] Validate machine-readable API structure with available tooling; record missing standard lint/mock validation as D0 gate.
 - [x] Fresh independent builder check; seven findings resolved in normative §15 and follow-up review found sufficient for design approval, not provider code-readiness.
 - [x] Final structural/whitespace and documentation-only scope verification; documentation commit recorded in Git history.
+- [x] Conditional approval executed: ADRs 5.1–5.7 record Windows transport/persistence, Linux SSH contract, Azure identity/RBAC, OS/artifact matrix, test-target policy and candidate-commit disposition; §14 gate table annotated; ADR cross-review must-fix items resolved (receipt-TTL/closure, revocation serialization, peer-SID path, manager router auth, RBAC read actions, token-type/nbf checks).
+- [x] Re-review of normative §14–15 after ADR additions; no remaining contradiction found.
 - [ ] Operator approves full design and unresolved decisions.
 - [ ] Detailed execution plan approval before any application implementation.
