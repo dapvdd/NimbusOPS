@@ -2,7 +2,6 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 import App from '../../App';
-import { addSimServer, listSimServers } from '../../lib/simRegistry';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -16,7 +15,6 @@ it('redirects anonymous browser to dedicated login without fetching operational 
 
 it('restores viewer session and removes enrollment actions', async () => {
   localStorage.clear();
-  addSimServer('viewer-must-not-remove', 'SIMULATED-DEV');
   vi.stubGlobal('fetch',vi.fn(async (url: string) => new Response(JSON.stringify(
     url.endsWith('/me') ? {operator_id:'v',username:'reader',role:'VIEWER'} :
     url.endsWith('/csrf') ? {csrf_token:'csrf'} :
@@ -26,6 +24,5 @@ it('restores viewer session and removes enrollment actions', async () => {
   await waitFor(()=>expect(screen.getByText('reader · VIEWER')).toBeInTheDocument());
   expect(screen.queryByRole('button',{name:'Add Server'})).not.toBeInTheDocument();
   expect(screen.getByRole('button',{name:'Log out'})).toBeInTheDocument();
-  expect(screen.queryByRole('button',{name:'Remove viewer-must-not-remove'})).not.toBeInTheDocument();
-  expect(listSimServers()).toHaveLength(1);
+  expect(screen.queryByRole('button',{name:/remove/i})).not.toBeInTheDocument();
 });

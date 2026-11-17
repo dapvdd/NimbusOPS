@@ -100,7 +100,7 @@ def issue_reenroll_bootstrap(db: Session, host_id: str, actor) -> tuple[Host, st
     host = db.get(Host, host_id)
     if host is None:
         raise ApiError(404, ErrorCode.HOST_NOT_FOUND, f"host {host_id} not found")
-    row, plaintext = issue_bootstrap_token(db, actor, host.hostname)
+    row, plaintext = issue_bootstrap_token(db, actor, host.hostname, intent="reenroll")
     record_host_event(db, host.id, "RE_ENROLL_REQUESTED", actor=actor.username, detail=f"bootstrap={row.id}")
     db.commit()
     return host, plaintext, row.expires_at

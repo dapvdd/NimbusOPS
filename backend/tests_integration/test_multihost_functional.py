@@ -81,14 +81,17 @@ def test_two_identities_reconnect_and_host_queue_isolation(tmp_path):
                 sender = Sender(server_url=base, host_id=identity.host_id, agent_token=identity.agent_token)
                 senders.append(sender)
                 assert run_cycle(sender, telemetry_only=True)[0]
-            monitor, docker = identities
-            assert monitor.host_id != docker.host_id
-            for identity in identities:
+                # Assert immediately after this host's own cycle: with the
+                # 1s/2s test thresholds, a heartbeat older than a second is
+                # STALE/OFFLINE by design, and the next host's enrollment can
+                # legitimately take longer than that on slow machines.
                 host = api.get(f'/api/v1/hosts/{identity.host_id}').json()
-                assert host['status'] == 'ONLINE'
+                assert host['status'] == 'ONLINE', host
                 assert host['latest_metrics']['memory_total_bytes'] > 0
                 assert host['latest_metrics']['disk_total_bytes'] > 0
                 assert host['last_telemetry_at']
+            monitor, docker = identities
+            assert monitor.host_id != docker.host_id
             denied = api.post('/api/v1/applications/deploy', headers=auth,
                               json={"host_id": monitor.host_id, "template_key": "nginx-demo"})
             assert denied.status_code == 403

@@ -36,6 +36,9 @@ class HeartbeatRequest(BaseModel):
     cpu_cores: int | None = Field(default=None, ge=1, le=4096)
     total_memory_bytes: int | None = Field(default=None, ge=0)
     boot_time: datetime | None = None
+    # Sprint D3: mode the running agent reports. Absence (None) is meaningful —
+    # it clears any previously reported mode ("not reported" now).
+    agent_mode: Literal["executor", "telemetry-only"] | None = None
     # Phase 5 (FR-03): optional docker inventory snapshot (replace-on-report).
     inventory: "InventoryPayload | None" = None
 
@@ -121,7 +124,11 @@ MetricsPoint = LatestMetrics  # Same shape on history endpoints.
 class HostOut(BaseModel):
     id: str
     hostname: str
-    status: Literal["ONLINE", "STALE", "OFFLINE"]
+    # Sprint D1: effective display status — REVOKED beats connectivity.
+    status: Literal["ONLINE", "STALE", "OFFLINE", "REVOKED"]
+    # Sprint D1: pure heartbeat connectivity, kept for clients that must not
+    # see revocation folded into their connectivity logic.
+    connectivity: Literal["ONLINE", "STALE", "OFFLINE"]
     agent_version: str | None
     platform: str | None
     platform_release: str | None
@@ -138,6 +145,27 @@ class HostOut(BaseModel):
     docker_enabled: bool
     # Phase 4 (FR-19): environment grouping metadata.
     environment: Literal["PRIVATE", "PUBLIC-CLOUD"]
+    # Sprint D3: mode the running agent reported (null = not reported).
+    agent_mode: Literal["executor", "telemetry-only"] | None
+    # Sprint D1: rotation bookkeeping for the UI countdown.
+    credential_version: int
+    # Null unless a rotation grace window is ACTIVE (hash set AND expires_at > now).
+    credential_grace_until: datetime | None
+
+
+class HostEventOut(BaseModel):
+    id: int
+    host_id: str | None
+    event: str
+    actor: str
+    detail: str | None
+    at: datetime
+    created_at: datetime
+
+
+class HostEventListResponse(BaseModel):
+    events: list[HostEventOut]
+    count: int
 
 
 class PaginationMeta(BaseModel):

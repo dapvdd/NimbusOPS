@@ -11,13 +11,14 @@ import type {
   DeployResponse,
   HealthResponse,
   Host,
+  HostEventListResponse,
   HostListResponse,
   HostMetricsResponse,
-  LoginResponse,
   ManagedAppListResponse,
   MeResponse,
   Operation,
   OperationListResponse,
+  ReadinessResponse,
   ReenrollResponse,
   RotateCredentialResponse,
   TemplateListResponse,
@@ -27,38 +28,24 @@ export class ApiFailure extends Error {
   /** kind: "http" (server responded with an error status) | "network" */
   kind: "http" | "network";
   status?: number;
+  code?: string;
 
-  constructor(kind: "http" | "network", message: string, status?: number) {
+  constructor(kind: "http" | "network", message: string, status?: number, code?: string) {
     super(message);
     this.kind = kind;
     this.status = status;
+    this.code = code;
   }
 }
 
 const API_BASE = "/api/v1";
 
-/**
- * Operator session token lives HERE only (module-scoped, in memory).
- * REACT-AUTH-001 (O1 accepted): never localStorage/sessionStorage/cookies —
- * an XSS reading storage would exfiltrate a long-lived credential; a memory
- * variable dies with the tab.
- */
-let operatorSessionToken: string | null = null;
 let csrfToken: string | null = null;
 
 export async function refreshCsrf(): Promise<void> {
   const response = await fetch(`${API_BASE}/operators/session/csrf`, { credentials: 'same-origin', cache: 'no-store' });
   if (!response.ok) throw new ApiFailure('http', 'Unable to establish a secure session.', response.status);
   csrfToken = (await response.json()).csrf_token;
-}
-
-/** Test/visibility hook: the session token is intentionally not persisted. */
-export function currentSessionToken(): string | null {
-  return operatorSessionToken;
-}
-
-function authHeaders(): Record<string, string> {
-  return operatorSessionToken ? { Authorization: `Bearer ${operatorSessionToken}` } : {};
 }
 
 /** Decode a path segment, returning null when the encoding is malformed. */
@@ -107,7 +94,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       credentials: 'same-origin',
       cache: 'no-store',
-      headers: { Accept: "application/json", ...authHeaders(), ...(csrfToken && init?.method && init.method !== 'GET' ? {'X-CSRF-Token':csrfToken} : {}), ...init?.headers },
+      headers: { Accept: "application/json", ...(csrfToken && init?.method && init.method !== 'GET' ? {'X-CSRF-Token':csrfToken} : {}), ...init?.headers },
     });
   } catch {
     throw new ApiFailure("network", "Cannot reach the NimbusOps server.");
@@ -115,17 +102,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!resp.ok) {
     if (resp.status === 401 && !path.includes('/login')) window.dispatchEvent(new Event('nimbusops:session-expired'));
     let message = `Server returned ${resp.status}`;
+    let code: string | undefined;
     try {
       const body = (await resp.json()) as ApiErrorBody | { detail?: unknown };
-      if ("error" in body && body.error?.message) {
-        message = body.error.message;
+      if ("error" in body && body.error) {
+        if (body.error.message) message = body.error.message;
+        if (body.error.code) code = body.error.code;
       } else if ("detail" in body) {
         message = `Validation failed (${resp.status})`;
       }
     } catch {
       // Non-JSON error body; keep generic message.
     }
-    throw new ApiFailure("http", message, resp.status);
+    throw new ApiFailure("http", message, resp.status, code);
   }
   return resp.json() as Promise<T>;
 }
@@ -135,18 +124,40 @@ export const api = {
     await refreshCsrf();
     const result = await request<{ role: 'ADMIN' | 'VIEWER'; csrf_token: string }>('/operators/session/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
     csrfToken = result.csrf_token;
-    operatorSessionToken = null;
     return result;
   },
   browserLogout: async () => {
     await refreshCsrf();
     await request('/operators/session/logout', {method:'POST'});
     csrfToken = null;
-    operatorSessionToken = null;
   },
   health: () => request<HealthResponse>("/health"),
+  readiness: async (): Promise<ReadinessResponse> => {
+    let resp: Response;
+    try {
+      resp = await fetch(`${API_BASE}/ready`, {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+    } catch {
+      throw new ApiFailure("network", "Cannot reach the NimbusOps server.");
+    }
+    if (resp.status === 200 || resp.status === 503) {
+      try {
+        return (await resp.json()) as ReadinessResponse;
+      } catch {
+        // Continue to throw error below if body is not valid JSON
+      }
+    }
+    throw new ApiFailure("http", `Readiness check failed (${resp.status})`, resp.status);
+  },
   listHosts: () => request<HostListResponse>("/hosts"),
   getHost: (id: string) => request<Host>(`/hosts/${encodeURIComponent(id)}`),
+  listHostEvents: (id: string, limit?: number) => {
+    const qs = limit !== undefined ? `?limit=${limit}` : "";
+    return request<HostEventListResponse>(`/hosts/${encodeURIComponent(id)}/events${qs}`);
+  },
   getHostInventory: (id: string) => request<import("./types").HostInventory>(`/hosts/${encodeURIComponent(id)}/inventory`),
   getHostMetrics: (id: string, limit = 120) =>
     request<HostMetricsResponse>(`/hosts/${encodeURIComponent(id)}/metrics?limit=${limit}`),
@@ -179,22 +190,6 @@ export const api = {
     request<ContainerStateResponse>(`/applications/${encodeURIComponent(deploymentId)}/container-state`),
 
   // ---------------------------------------------------------------- Phase 3B
-  login: async (username: string, password: string): Promise<LoginResponse> => {
-    const body = await request<LoginResponse>("/operators/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-    operatorSessionToken = body.session_token; // memory only
-    return body;
-  },
-  logout: async (): Promise<void> => {
-    try {
-      await request<{ status: string }>("/operators/logout", { method: "POST" });
-    } finally {
-      operatorSessionToken = null;
-    }
-  },
   me: () => request<MeResponse>("/operators/me"),
   issueBootstrapToken: (hostname: string, expiresIn?: number) =>
     request<BootstrapTokenIssued>("/operators/bootstrap-tokens", {
@@ -202,7 +197,13 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ hostname, ...(expiresIn !== undefined ? { expires_in_seconds: expiresIn } : {}) }),
     }),
-  listBootstrapTokens: () => request<BootstrapTokenListResponse>("/operators/bootstrap-tokens"),
+  listBootstrapTokens: (opts?: { active?: boolean; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.active !== undefined) params.set("active", String(opts.active));
+    if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    return request<BootstrapTokenListResponse>(`/operators/bootstrap-tokens${qs ? `?${qs}` : ""}`);
+  },
   revokeBootstrapToken: (id: string) =>
     request<{ id: string; revoked_at: string | null }>(`/operators/bootstrap-tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
   patchHost: (id: string, patch: { docker_enabled?: boolean; environment?: "PRIVATE" | "PUBLIC-CLOUD" }) =>
@@ -219,7 +220,7 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(gracePeriodSeconds !== undefined ? { grace_period_seconds: gracePeriodSeconds } : {}),
     }),
-  issueReenrollBootstrap: (id: string) =>
+  reenrollHost: (id: string) =>
     request<ReenrollResponse>(`/hosts/${encodeURIComponent(id)}/re-enroll`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

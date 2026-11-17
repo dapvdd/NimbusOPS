@@ -1,134 +1,244 @@
-/**
- * Servers view: real fleet + simulated registry.
- *
- * Phase 3B (Task 7): "Existing server" enrolls via operator login + a
- * single-use bootstrap token (shown once, copy + expiry countdown). Real
- * hosts expose Safe Unregister (revoke-to-tombstone) requiring typed host id.
- */
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { api, ApiFailure } from "../api/client";
 import type { Host } from "../api/types";
-import { addSimServer, listSimServers, removeSimServer, type SimEnvironment } from "../lib/simRegistry";
+import { useAdmin } from "../auth/Session";
+import { ErrorPanel, LoadingPanel } from "../components/StatePanels";
 import { StatusBadge } from "../components/StatusBadge";
 import { MetricCard } from "../components/MetricCard";
-import { useAdmin, useSession } from '../auth/Session';
+import { useFleet } from "../hooks/useFleet";
+import { deriveOnboardingState } from "../lib/onboarding";
+import { Button } from "../ui/Button";
+
+type FilterValue = "ALL" | "ONLINE" | "STALE" | "OFFLINE" | "REVOKED" | "AWAITING" | "PRIVATE" | "PUBLIC-CLOUD";
 
 export default function Servers() {
   const admin = useAdmin();
-  const [hosts, setHosts] = useState<Host[]>([]);
-  const [sim, setSim] = useState(listSimServers);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const navigate = useNavigate();
+  const { hosts, tokens, loading, error, refetch } = useFleet();
+
   const [query, setQuery] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [real, setReal] = useState(false);
-  const [name, setName] = useState("");
-  const [environment, setEnvironment] = useState<SimEnvironment>("SIMULATED-DEV");
-  const [formError, setFormError] = useState("");
+  const [filter, setFilter] = useState<FilterValue>("ALL");
   const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
-  useEffect(() => {
-    let alive = true;
-    const load = () => api.listHosts().then(data => { if (alive) { setHosts(data.hosts); setError(""); } }).catch(e => { if (alive) setError(e.message); }).finally(() => { if (alive) setLoading(false); });
-    void load();
-    const timer = window.setInterval(load, 30000);
-    const sync = () => setSim(listSimServers());
-    window.addEventListener("nimbusops:registry", sync);
-    window.addEventListener("storage", sync);
-    return () => { alive = false; clearInterval(timer); window.removeEventListener("nimbusops:registry", sync); window.removeEventListener("storage", sync); };
-  }, []);
+
+  // Active tokens waiting for enrollment
+  const awaitingTokens = (tokens || []).filter(
+    (t) => deriveOnboardingState(t) === "WAITING"
+  );
+
   const matches = (value: string) => value.toLowerCase().includes(query.toLowerCase());
-  const [envFilter, setEnvFilter] = useState<"ALL" | "PRIVATE" | "PUBLIC-CLOUD">("ALL");
   const hostEnv = (h: Host) => h.environment ?? "PRIVATE";
-  const envMatches = (h: Host) => envFilter === "ALL" || hostEnv(h) === envFilter;
-  return <div className="space-y-6">
-    <header className="flex items-center justify-between gap-4"><div><p className="text-xs uppercase tracking-widest text-signal-info">Infrastructure / Fleet</p><h1 className="mt-2 text-3xl font-semibold">Servers</h1><p className="mt-2 text-sm text-ink-300">Your infrastructure, one host at a time.</p></div>{admin && <button className="rounded-lg bg-signal-info px-4 py-3 text-ink-950 font-semibold" onClick={() => { setAdding(true); setFormError(""); }}>Add Server</button>}</header>
-    <label className="block text-sm">Search servers<input className="mt-2 block w-full rounded-lg border border-ink-600 bg-ink-900 p-3" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by server name…" /></label>
-    <div role="group" aria-label="Filter by environment" className="flex gap-2">{(["ALL", "PRIVATE", "PUBLIC-CLOUD"] as const).map(v => <button key={v} aria-pressed={envFilter === v} onClick={() => setEnvFilter(v)} className={`rounded-full border px-3 py-1 text-xs ${envFilter === v ? "border-signal-info bg-signal-info/10 text-signal-info" : "border-ink-600 text-ink-300"}`}>{v === "ALL" ? "ALL" : v}</button>)}</div>
-    {loading && <p role="status">Loading real servers…</p>}
-    {error && <p role="alert" className="rounded-lg border border-signal-bad p-4 text-signal-bad">Real infrastructure unavailable: {error}. Simulations below are local only.</p>}
-    <h2 className="text-xs uppercase tracking-widest text-ink-300">Real infrastructure · {hosts.length}</h2>
-    {!loading && !error && hosts.length === 0 && <p>No real servers registered</p>}
-    <div className="grid gap-4 xl:grid-cols-2">{hosts.filter(h => matches(h.hostname) && envMatches(h)).map(h => <article key={h.id} className={`rounded-xl border p-5 ${h.is_revoked ? "border-signal-bad/40 bg-signal-bad/5" : "border-ink-700 bg-ink-850"}`}><div className="flex items-center justify-between gap-3"><Link className="font-semibold text-lg text-signal-info" to={`/hosts/${h.id}`}>{h.hostname}</Link><StatusBadge status={h.status} /></div><p className="my-4 text-xs text-ink-300"><span className={`mr-2 rounded-full border px-2 py-0.5 ${h.is_revoked ? "border-signal-bad/40 text-signal-bad" : "border-ink-600"}`}>{h.is_revoked ? "REVOKED" : "ACTIVE"}</span><span className="mr-2 rounded-full border border-ink-600 px-2 py-0.5">{hostEnv(h)}</span>REAL · {h.enrollment_status}{h.docker_enabled ? " · Docker enabled" : ""}</p><div className="grid grid-cols-3 gap-2"><MetricCard label="CPU" percent={h.latest_metrics?.cpu_percent ?? null} /><MetricCard label="RAM" percent={h.latest_metrics?.memory_used_percent ?? null} /><MetricCard label="Disk" percent={h.latest_metrics?.disk_used_percent ?? null} /></div>{admin && (h.is_revoked ? <ReenrollButton host={h} /> : <button className="mt-4 text-sm text-signal-bad" aria-label={`Unregister ${h.hostname}`} onClick={() => setRemoving({ id: h.id, name: h.hostname })}>Unregister</button>)}</article>)}</div>
-    <section className="rounded-xl border border-amber-400/30 bg-amber-400/5 p-5"><h2 className="font-semibold text-amber-300">SIMULATED · Local demo registry</h2><p className="mt-2 text-sm text-ink-300">These servers are browser-only demonstrations. They have no agent or Docker access.</p><div className="mt-5 grid gap-4 xl:grid-cols-2">{sim.filter(h => matches(h.name)).map(h => <article key={h.id} className="rounded-lg border border-ink-600 bg-ink-900 p-5"><Link className="text-lg font-semibold text-signal-info" to={`/servers/${h.id}`}>{h.name}</Link><p className="my-3 text-xs text-amber-300">{h.environment} · SIMULATED ONLINE</p><p className="text-sm text-ink-300">Synthetic preview · CPU {10 + h.seed % 60}% · RAM {20 + h.seed % 50}%</p>{admin && <button className="mt-4 text-sm text-signal-bad" aria-label={`Remove ${h.name}`} onClick={() => { if (admin) setRemoving(h); }}>Remove</button>}</article>)}</div>{sim.length === 0 && <p className="mt-4 text-sm">No simulated servers. Add one to explore the dashboard.</p>}</section>
-    {query && !hosts.some(h => matches(h.hostname)) && !sim.some(h => matches(h.name)) && <p>No servers match your search.</p>}
-    {adding && <section aria-label="Add server" className="rounded-xl border border-signal-info bg-ink-850 p-6"><h2 className="text-xl font-semibold">Add server</h2><div className="my-4 flex gap-4"><button onClick={() => setReal(false)} aria-pressed={!real}>Simulated demo server</button><button onClick={() => setReal(true)} aria-pressed={real}>Existing server</button></div>{real ? <EnrollFlow onDone={() => { setAdding(false); setReal(false); }} /> : <form className="space-y-4" onSubmit={e => { e.preventDefault(); try { addSimServer(name, environment); setAdding(false); setName(""); } catch (err) { setFormError((err as Error).message); } }}><label className="block">Server name<input autoFocus className="ml-3 rounded border border-ink-600 bg-ink-900 p-2" value={name} onChange={e => setName(e.target.value)} maxLength={64} /></label><label className="block">Environment<select className="ml-3 rounded bg-ink-900 p-2" value={environment} onChange={e => setEnvironment(e.target.value as SimEnvironment)}>{["SIMULATED-DEV", "SIMULATED-STAGING", "SIMULATED-PROD"].map(v => <option key={v}>{v}</option>)}</select></label>{formError && <p role="alert">{formError}</p>}<button className="rounded bg-signal-info px-4 py-2 text-ink-950">Create simulated server</button></form>}<button className="mt-4 text-ink-300" onClick={() => setAdding(false)}>Cancel</button></section>}
-    {admin && removing && (removing.id.startsWith("sim-")
-      ? <section aria-label="Confirm server removal" className="rounded-xl border border-signal-bad p-6"><h2>Remove {removing.name}?</h2><p className="my-3 text-sm">This removes only the browser simulation. Local removal history is retained.</p><button className="mr-6 text-signal-bad" onClick={() => { try { removeSimServer(removing.id); setRemoving(null); } catch (err) { setError((err as Error).message); } }}>Confirm removal</button><button onClick={() => setRemoving(null)}>Cancel</button></section>
-      : <UnregisterDialog host={removing} onClose={() => setRemoving(null)} />)}
-  </div>;
-}
 
-/** Operator login → issue single-use bootstrap token (shown once). */
-function EnrollFlow({ onDone }: { onDone: () => void }) {
-  const session = useSession();
-  const [loggedIn, setLoggedIn] = useState(session?.user?.role === 'ADMIN');
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [hostname, setHostname] = useState("");
-  const [authError, setAuthError] = useState("");
-  const [issueError, setIssueError] = useState("");
-  const [issued, setIssued] = useState<{ token: string; expiresAt: string } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
+  // Filter logic
+  const filteredHosts = hosts.filter((h) => {
+    if (!matches(h.hostname)) return false;
+    if (filter === "ALL") return true;
+    if (filter === "REVOKED") return h.is_revoked || h.status === "REVOKED";
+    if (filter === "AWAITING") return false;
+    if (filter === "PRIVATE" || filter === "PUBLIC-CLOUD") return hostEnv(h) === filter;
+    return h.status === filter && !h.is_revoked;
+  });
 
-  const submitLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setAuthError("");
-    try {
-      await api.login(username, password);
-      setLoggedIn(true);
-    } catch (err) {
-      setAuthError(err instanceof ApiFailure ? err.message : "Login failed.");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const filteredAwaiting = (filter === "ALL" || filter === "AWAITING")
+    ? awaitingTokens.filter((t) => matches(t.hostname))
+    : [];
 
-  const issue = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setIssueError("");
-    setCopied(false);
-    try {
-      const t = await api.issueBootstrapToken(hostname);
-      setIssued({ token: t.token, expiresAt: t.expires_at });
-    } catch (err) {
-      setIssueError(err instanceof ApiFailure ? err.message : "Token issuance failed.");
-    } finally {
-      setBusy(false);
-    }
-  };
+  return (
+    <div className="space-y-6">
+      <header className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-xs uppercase tracking-widest text-signal-info">Infrastructure / Fleet</p>
+          <h1 className="mt-2 text-3xl font-semibold text-ink-50">Servers</h1>
+          <p className="mt-2 text-sm text-ink-300">Your infrastructure, one host at a time.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => void refetch()}
+            className="text-xs"
+          >
+            Refresh
+          </Button>
+          {admin && (
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => navigate("/servers/new")}
+            >
+              Add Server
+            </Button>
+          )}
+        </div>
+      </header>
 
-  if (issued) {
-    return <div className="mt-4 space-y-4">
-      <p className="font-semibold text-amber-300">Bootstrap token — shown once. Copy it now; it will never be shown again.</p>
-      <code className="block break-all rounded-lg border border-ink-600 bg-ink-900 p-3 font-mono text-sm">{issued.token}</code>
-      <p data-testid="countdown">Expires in {countdownLabel(issued.expiresAt)}</p>
-      <button className="rounded bg-signal-info px-4 py-2 text-ink-950" onClick={() => { void navigator.clipboard?.writeText(issued.token).then(() => setCopied(true)).catch(() => setCopied(false)); }}>Copy token</button>
-      {copied && <p role="status">Copied to clipboard.</p>}
-      <p className="text-sm text-ink-300">Run the agent on the target host with this token in its environment. When it enrolls, the host appears in this list within 30 seconds.</p>
-      <button className="text-ink-300" onClick={onDone}>Done</button>
-    </div>;
-  }
+      {/* Search Bar */}
+      <label className="block text-sm">
+        <span className="text-ink-200">Search servers</span>
+        <input
+          className="mt-2 block w-full rounded-lg border border-ink-600 bg-ink-900 p-3 text-ink-100 placeholder-ink-500 focus:border-signal-info focus:outline-none"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by server name…"
+        />
+      </label>
 
-  if (!loggedIn) {
-    return <form className="mt-4 space-y-4" onSubmit={submitLogin}>
-      <p className="text-sm text-ink-300">Enrolling an existing server requires an operator session. Sign in first — the session is kept in memory only.</p>
-      <label className="block">Username<input required className="mt-1 block w-full max-w-sm rounded border border-ink-600 bg-ink-900 p-2" value={username} onChange={e => setUsername(e.target.value)} autoComplete="off" /></label>
-      <label className="block">Password<input required type="password" className="mt-1 block w-full max-w-sm rounded border border-ink-600 bg-ink-900 p-2" value={password} onChange={e => setPassword(e.target.value)} autoComplete="off" /></label>
-      {authError && <p role="alert" className="text-signal-bad">{authError}</p>}
-      <button disabled={busy} className="rounded bg-signal-info px-4 py-2 text-ink-950 disabled:opacity-50">Sign in</button>
-    </form>;
-  }
+      {/* Filter Chips */}
+      <div role="group" aria-label="Filter servers" className="flex flex-wrap gap-2">
+        {(["ALL", "ONLINE", "STALE", "OFFLINE", "REVOKED", "AWAITING", "PRIVATE", "PUBLIC-CLOUD"] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            aria-pressed={filter === v}
+            onClick={() => setFilter(v)}
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              filter === v
+                ? "border-signal-info bg-signal-info/10 text-signal-info"
+                : "border-ink-700 bg-surface-2 text-ink-300 hover:border-ink-600 hover:text-ink-200"
+            }`}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
 
-  return <form className="mt-4 space-y-4" onSubmit={issue}>
-    <p className="text-sm text-ink-300">Signed in. Issue a single-use bootstrap token scoped to the new host's hostname.</p>
-    <label className="block">Hostname<input required className="mt-1 block w-full max-w-sm rounded border border-ink-600 bg-ink-900 p-2" value={hostname} onChange={e => setHostname(e.target.value)} maxLength={255} /></label>
-    {issueError && <p role="alert" className="text-signal-bad">{issueError}</p>}
-    <button disabled={busy} className="rounded bg-signal-info px-4 py-2 text-ink-950 disabled:opacity-50">Issue bootstrap token</button>
-  </form>;
+      {loading && <LoadingPanel label="Loading real servers" />}
+
+      {error && (
+        <ErrorPanel
+          error={error}
+          onRetry={() => void refetch()}
+        />
+      )}
+
+      {/* Fleet Table / Grid */}
+      {!loading && !error && (
+        <>
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs uppercase tracking-widest text-ink-300">
+              Fleet · {hosts.length} {hosts.length === 1 ? "host" : "hosts"}
+              {awaitingTokens.length > 0 && ` (${awaitingTokens.length} awaiting enrollment)`}
+            </h2>
+          </div>
+
+          {filteredHosts.length === 0 && filteredAwaiting.length === 0 && (
+            <p className="text-sm text-ink-400 py-8 text-center">
+              {query ? "No servers match your search." : "No real servers registered"}
+            </p>
+          )}
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            {/* Active Real Hosts */}
+            {filteredHosts.map((h) => {
+              const isRevoked = h.is_revoked || h.status === "REVOKED";
+              return (
+                <article
+                  key={h.id}
+                  className={`rounded-xl border p-5 ${
+                    isRevoked
+                      ? "border-signal-bad/40 bg-signal-bad/5"
+                      : "border-ink-700 bg-ink-850"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <Link
+                      className="font-semibold text-lg text-signal-info hover:underline"
+                      to={`/servers/${h.id}`}
+                    >
+                      {h.hostname}
+                    </Link>
+                    <StatusBadge status={isRevoked ? "REVOKED" : h.status} />
+                  </div>
+
+                  <p className="my-4 text-xs text-ink-300">
+                    <span
+                      className={`mr-2 rounded-full border px-2 py-0.5 ${
+                        isRevoked ? "border-signal-bad/40 text-signal-bad" : "border-ink-600"
+                      }`}
+                    >
+                      {isRevoked ? "REVOKED" : "ACTIVE"}
+                    </span>
+                    <span className="mr-2 rounded-full border border-ink-600 px-2 py-0.5">
+                      {hostEnv(h)}
+                    </span>
+                    REAL · {h.enrollment_status}
+                    {h.docker_enabled ? " · Docker enabled" : ""}
+                  </p>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <MetricCard
+                      label="CPU"
+                      percent={h.latest_metrics ? h.latest_metrics.cpu_percent : null}
+                    />
+                    <MetricCard
+                      label="RAM"
+                      percent={h.latest_metrics ? h.latest_metrics.memory_used_percent : null}
+                    />
+                    <MetricCard
+                      label="Disk"
+                      percent={h.latest_metrics ? h.latest_metrics.disk_used_percent : null}
+                    />
+                  </div>
+
+                  {admin && (
+                    <div className="mt-4 flex items-center justify-between pt-2 border-t border-ink-800">
+                      {isRevoked ? (
+                        <Link
+                          to={`/servers/${h.id}`}
+                          className="text-xs font-semibold text-signal-info hover:underline"
+                        >
+                          Re-enroll
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          className="text-xs text-signal-bad hover:underline"
+                          aria-label={`Unregister ${h.hostname}`}
+                          onClick={() => setRemoving({ id: h.id, name: h.hostname })}
+                        >
+                          Unregister
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+
+            {/* Awaiting Enrollment Rows */}
+            {filteredAwaiting.map((t) => (
+              <article
+                key={t.id}
+                className="rounded-xl border border-dashed border-ink-700 bg-surface-1/50 p-5"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-semibold text-lg text-ink-200">
+                    {t.hostname}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-signal-warn/30 bg-signal-warn/10 px-2.5 py-1 text-xs font-medium text-signal-warn">
+                    <span className="font-mono text-xs leading-none">○</span>
+                    <span>Awaiting enrollment</span>
+                  </span>
+                </div>
+                <p className="my-4 text-xs text-ink-400">
+                  Bootstrap token issued · Expires in {countdownLabel(t.expires_at)}
+                </p>
+                <div className="rounded-lg border border-ink-800 bg-ink-900/60 p-3 text-xs text-ink-300">
+                  Not enrolled yet. Run the onboarding commands on the host to complete registration.
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Safe Unregister Dialog */}
+      {admin && removing && (
+        <UnregisterDialog host={removing} onClose={() => setRemoving(null)} />
+      )}
+    </div>
+  );
 }
 
 function countdownLabel(expiresAt: string): string {
@@ -141,11 +251,18 @@ function countdownLabel(expiresAt: string): string {
 }
 
 /** Safe Unregister: revoke-to-tombstone; requires typing the host id. */
-function UnregisterDialog({ host, onClose }: { host: { id: string; name: string }; onClose: () => void }) {
+function UnregisterDialog({
+  host,
+  onClose,
+}: {
+  host: { id: string; name: string };
+  onClose: () => void;
+}) {
   const [confirmText, setConfirmText] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const enabled = confirmText === host.id;
+
   const submit = async () => {
     if (!enabled) return;
     setBusy(true);
@@ -159,76 +276,44 @@ function UnregisterDialog({ host, onClose }: { host: { id: string; name: string 
       setBusy(false);
     }
   };
-  return <section aria-label={`Unregister ${host.name}`} className="rounded-xl border border-signal-bad p-6">
-    <h2 className="text-xl font-semibold">Unregister {host.name}?</h2>
-    <ul className="my-3 list-disc pl-5 text-sm text-ink-300">
-      <li>The agent's credential is revoked: it receives 401 on its next call and stops reporting.</li>
-      <li>The host becomes a tombstone: telemetry and history are retained, never deleted.</li>
-      <li>Containers and files on the host are NOT removed; clean them up manually if desired.</li>
-    </ul>
-    <label className="block text-sm">Type the host id <span className="font-mono">{host.id}</span> to confirm
-      <input className="mt-2 block w-full max-w-sm rounded border border-ink-600 bg-ink-900 p-2 font-mono" value={confirmText} onChange={e => setConfirmText(e.target.value)} />
-    </label>
-    {error && <p role="alert" className="mt-2 text-signal-bad">{error}</p>}
-    <div className="mt-4 flex gap-4">
-      <button disabled={!enabled || busy} className="rounded bg-signal-bad px-4 py-2 text-ink-950 disabled:opacity-50" onClick={() => void submit()}>Unregister</button>
-      <button onClick={onClose}>Cancel</button>
-    </div>
-  </section>;
-}
 
-/**
- * S4-1 (Phase C): one-time re-enroll bootstrap for a revoked/lost host.
- *
- * Issues POST /hosts/{id}/re-enroll exactly once per click; shows the token
- * once with a copy field and expiry countdown. Failures surface typed
- * messages (409 consumed, 410 expired, 401/403 auth problems) — never a
- * generic "something went wrong".
- */
-function ReenrollButton({ host }: { host: Host }) {
-  const [issued, setIssued] = useState<{ token: string; expiresAt: string } | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  const issue = async () => {
-    if (busy || issued) return;
-    setBusy(true);
-    setError("");
-    setCopied(false);
-    try {
-      const t = await api.issueReenrollBootstrap(host.id);
-      setIssued({ token: t.bootstrap_token, expiresAt: t.expires_at });
-    } catch (err) {
-      setError(err instanceof ApiFailure ? typedReenrollError(err) : "Re-enroll failed.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (issued) {
-    return <div className="mt-4 space-y-2 rounded-lg border border-signal-info/40 bg-ink-900 p-3">
-      <p className="text-xs font-semibold text-amber-300">Bootstrap token for {host.hostname} — shown once. Copy it now.</p>
-      <code className="block break-all rounded border border-ink-600 bg-ink-950 p-2 font-mono text-xs">{issued.token}</code>
-      <p data-testid="reenroll-countdown" className="text-xs text-ink-300">Expires in {countdownLabel(issued.expiresAt)}</p>
-      <button className="rounded bg-signal-info px-3 py-1.5 text-xs text-ink-950" onClick={() => { void navigator.clipboard?.writeText(issued.token).then(() => setCopied(true)).catch(() => setCopied(false)); }}>Copy token</button>
-      {copied && <p role="status" className="text-xs">Copied to clipboard.</p>}
-    </div>;
-  }
-
-  return <div className="mt-4">
-    <button className="text-sm text-signal-info" aria-label={`Re-enroll ${host.hostname}`} disabled={busy} onClick={() => void issue()}>
-      Issue re-enroll token
-    </button>
-    {error && <p role="alert" className="mt-1 text-xs text-signal-bad">{error}</p>}
-  </div>;
-}
-
-/** Typed error copy per re-enroll failure mode (409/410/401/403). */
-function typedReenrollError(err: ApiFailure): string {
-  if (err.status === 409) return "This re-enroll token was already used. Issue a fresh one.";
-  if (err.status === 410) return "The re-enroll token expired. Issue a fresh one.";
-  if (err.status === 403) return "Your session cannot issue re-enroll tokens (ADMIN required).";
-  if (err.status === 401) return "Session expired. Sign in again, then retry.";
-  return err.message || "Re-enroll failed.";
+  return (
+    <section
+      aria-label={`Unregister ${host.name}`}
+      className="rounded-xl border border-signal-bad p-6 bg-surface-2"
+    >
+      <h2 className="text-xl font-semibold text-ink-50">Unregister {host.name}?</h2>
+      <ul className="my-3 list-disc pl-5 text-sm text-ink-300 space-y-1">
+        <li>The agent's credential is revoked: it receives 401 on its next call and stops reporting.</li>
+        <li>The host becomes a tombstone: telemetry and history are retained, never deleted.</li>
+        <li>Containers and files on the host are NOT removed; clean them up manually if desired.</li>
+      </ul>
+      <label className="block text-sm text-ink-200">
+        Type the host id <span className="font-mono text-signal-bad">{host.id}</span> to confirm
+        <input
+          className="mt-2 block w-full max-w-sm rounded border border-ink-600 bg-ink-900 p-2 font-mono text-ink-100"
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+        />
+      </label>
+      {error && <p role="alert" className="mt-2 text-signal-bad text-sm">{error}</p>}
+      <div className="mt-4 flex gap-4">
+        <button
+          type="button"
+          disabled={!enabled || busy}
+          className="rounded bg-signal-bad px-4 py-2 text-ink-950 font-semibold disabled:opacity-50"
+          onClick={() => void submit()}
+        >
+          Unregister
+        </button>
+        <button
+          type="button"
+          className="text-sm text-ink-300 hover:text-ink-100"
+          onClick={onClose}
+        >
+          Cancel
+        </button>
+      </div>
+    </section>
+  );
 }

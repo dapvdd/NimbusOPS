@@ -41,6 +41,12 @@ class Host(Base):
     previous_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     previous_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Sprint D3: mode the RUNNING agent reports via heartbeat (executor |
+    # telemetry-only). Nullable: NULL means "not reported" (older agent) —
+    # never guessed from docker_enabled. Every heartbeat rewrites it,
+    # including back to NULL, so a stale value cannot outlive its binary.
+    agent_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     # Agent-reported metadata (heartbeat-refreshed).
     agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     platform: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -208,6 +214,10 @@ class BootstrapToken(Base):
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consumed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)  # host id
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Sprint D2: enrollment intent enforced at issue AND consumption.
+    # 'enroll' (default; legacy rows backfill to this) requires the hostname to
+    # be new; 'reenroll' requires an existing host and is the only un-revoke path.
+    intent: Mapped[str] = mapped_column(String(16), nullable=False, default="enroll")
 
 
 class Operator(Base):

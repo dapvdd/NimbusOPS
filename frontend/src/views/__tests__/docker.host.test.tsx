@@ -1,9 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
 import HostDetail from "../HostDetail";
 vi.mock('../../auth/Session', () => ({ useAdmin: () => true }));
-import { api } from "../../api/client";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -19,7 +18,6 @@ function setup(inventoryStatus = 200) {
       status = inventoryStatus;
       body = status === 200 ? { host_id: "vm-2", observed_at: "2026-11-16T10:00:00Z", received_at: "2026-11-16T10:00:01Z", age_seconds: 25, containers: [{ id: "container-1", names: "owner-nginx", image: "nginx:1.27-alpine", state: "running", managed: false }] } : { error: { code: "INVENTORY_NOT_FOUND", message: "no inventory snapshot" } };
     } else if (url.includes("/metrics")) body = { points: [], count: 0 };
-    else if (url.includes("/operators/login")) body = { session_token: "offline-test-session" };
     else {
       if (init?.method === "PATCH") enabled = true;
       body = { id: "vm-2", hostname: "nimbus-syahrul", status: "ONLINE", docker_enabled: enabled, latest_metrics: null };
@@ -48,7 +46,6 @@ it("does not equate missing inventory with zero containers", async () => {
 
 it("requires explicit owner confirmation before authenticated host-specific enable", async () => {
   const requests = setup();
-  await act(async () => { await api.login("offline", "not-a-real-password"); });
   const button = await screen.findByRole("button", { name: "Enable Docker for this host" });
   expect(button).toBeDisabled();
   fireEvent.click(screen.getByRole("checkbox", { name: /owner explicitly authorized/i }));
@@ -57,7 +54,5 @@ it("requires explicit owner confirmation before authenticated host-specific enab
   const patch = requests.find(r => r.init?.method === "PATCH")!;
   expect(patch.url).toMatch(/\/hosts\/vm-2$/);
   expect(JSON.parse(patch.init!.body as string)).toEqual({ docker_enabled: true });
-  expect(new Headers(patch.init!.headers).get("Authorization")).toBe("Bearer offline-test-session");
   expect(await screen.findByText("Docker operations enabled")).toBeInTheDocument();
-  await api.logout();
 });

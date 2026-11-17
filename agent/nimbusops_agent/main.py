@@ -6,6 +6,7 @@ approved Docker operations; telemetry-only mode disables all Docker paths.
 
 from __future__ import annotations
 
+import json
 import logging
 import pathlib
 import signal
@@ -20,10 +21,12 @@ from .config import (
     DEFAULT_SERVER_URL,
     Config,
     ConfigError,
+    Identity,
+    backup_identity,
     collect_host_info,
     load_identity,
+    restore_backup,
     save_identity,
-    Identity,
 )
 from .telemetry import collect_telemetry, host_info_snapshot
 from .worker import CommandWorker, SenderCommandAdapter
@@ -41,6 +44,173 @@ def install_signal_handlers() -> None:
     signal.signal(signal.SIGINT, request_stop)
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, request_stop)
+
+
+def run_reenroll(
+    state_path: pathlib.Path,
+    token: str,
+    server_url: str,
+    agent_mode: str | None,
+) -> int:
+    """Task 2.1: one-shot re-enroll.
+
+    Exit codes:
+      0: success (identity written, heartbeat verified, backup removed)
+      2: failure (preconditions failed or server rejected; original restored)
+    """
+    token = (token or "").strip()
+    if not token:
+        print("nimbusops-agent: reenroll requires a bootstrap token", file=sys.stderr)
+        return 2
+
+    state_path = pathlib.Path(state_path)
+    backup_path = backup_identity(state_path, prefix="agent.json.pre-reenroll-")
+
+    sender = Sender(
+        server_url=server_url,
+        host_id="pending-reenroll",
+        agent_token="",
+    )
+    try:
+        ok, result = sender.enroll(
+            hostname=socket.gethostname(),
+            bootstrap_token=token,
+            info={"agent_mode": agent_mode} if agent_mode else {},
+        )
+        if not ok or not isinstance(result, dict):
+            print("nimbusops-agent: reenrollment rejected by server", file=sys.stderr)
+            if backup_path:
+                restore_backup(state_path, backup_path)
+            return 2
+
+        new_identity = Identity(host_id=result["host_id"], agent_token=result["agent_token"])
+        save_identity(state_path, new_identity)
+
+        # Verify heartbeat with new credential
+        verify_sender = Sender(
+            server_url=server_url,
+            host_id=new_identity.host_id,
+            agent_token=new_identity.agent_token,
+        )
+        try:
+            info = host_info_snapshot()
+            if agent_mode:
+                info["agent_mode"] = agent_mode
+            hb_ok, _detail = verify_sender.send_heartbeat(info)
+            if not hb_ok:
+                print("nimbusops-agent: heartbeat verification failed after re-enroll", file=sys.stderr)
+                if backup_path:
+                    restore_backup(state_path, backup_path)
+                return 2
+        finally:
+            verify_sender.close()
+
+        # Success: remove backup
+        if backup_path:
+            try:
+                backup_path.unlink()
+            except OSError:
+                pass
+        return 0
+    except Exception as exc:
+        print(f"nimbusops-agent: reenroll error: {type(exc).__name__}", file=sys.stderr)
+        if backup_path:
+            restore_backup(state_path, backup_path)
+        return 2
+    finally:
+        sender.close()
+
+
+def run_apply_credential_file(
+    state_path: pathlib.Path,
+    candidate_path: pathlib.Path,
+    server_url: str,
+    agent_mode: str | None = None,
+) -> int:
+    """Task 2.2: apply a candidate credential file.
+
+    Exit codes:
+      0: verified + identity replaced + candidate + backup removed
+      1: network failure (everything kept)
+      2: precondition failure (missing identity, candidate == state, malformed JSON, etc.)
+      3: server 401/403 (everything kept, candidate kept for retry)
+    """
+    state_path = pathlib.Path(state_path).resolve()
+    candidate_path = pathlib.Path(candidate_path).resolve()
+
+    if state_path == candidate_path:
+        print("nimbusops-agent: candidate file cannot be the same as state file", file=sys.stderr)
+        return 2
+
+    current_identity = load_identity(state_path)
+    if current_identity is None:
+        print(f"nimbusops-agent: state file does not exist or is invalid: {state_path}", file=sys.stderr)
+        return 2
+
+    if not candidate_path.is_file():
+        print(f"nimbusops-agent: candidate file not found: {candidate_path}", file=sys.stderr)
+        return 2
+
+    try:
+        cand_data = json.loads(candidate_path.read_text(encoding="utf-8"))
+        if not isinstance(cand_data, dict):
+            raise ValueError("not a JSON object")
+        new_token = cand_data.get("agent_token")
+        if not new_token or not isinstance(new_token, str):
+            raise ValueError("missing agent_token")
+    except Exception as exc:
+        print(f"nimbusops-agent: malformed candidate credential file: {type(exc).__name__}", file=sys.stderr)
+        return 2
+
+    backup_path = backup_identity(state_path, prefix="agent.json.pre-apply-")
+
+    # Send one heartbeat with candidate token to verify
+    verify_sender = Sender(
+        server_url=server_url,
+        host_id=current_identity.host_id,
+        agent_token=new_token,
+    )
+    try:
+        info = host_info_snapshot()
+        if agent_mode:
+            info["agent_mode"] = agent_mode
+        try:
+            hb_ok, detail = verify_sender.send_heartbeat(info)
+        except AuthError as exc:
+            print(f"nimbusops-agent: credentials rejected by server: {exc}", file=sys.stderr)
+            if backup_path:
+                try:
+                    backup_path.unlink()
+                except OSError:
+                    pass
+            return 3
+
+        if not hb_ok:
+            print(f"nimbusops-agent: network failure verifying credential: {detail}", file=sys.stderr)
+            if backup_path:
+                try:
+                    backup_path.unlink()
+                except OSError:
+                    pass
+            return 1
+
+        # Verified! Update state file
+        new_identity = Identity(host_id=current_identity.host_id, agent_token=new_token)
+        save_identity(state_path, new_identity)
+
+        # Remove candidate and backup files
+        try:
+            candidate_path.unlink()
+        except OSError:
+            pass
+        if backup_path:
+            try:
+                backup_path.unlink()
+            except OSError:
+                pass
+        return 0
+    finally:
+        verify_sender.close()
 
 
 def ensure_enrolled(cfg: Config) -> tuple[Identity, bool]:
@@ -168,6 +338,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-file", default=None, help="Path for identity storage")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit (testing)")
     parser.add_argument("--telemetry-only", action="store_true", help="Disable Docker inventory and operation execution/polling")
+    parser.add_argument("--reenroll", action="store_true", help="Run one-shot re-enrollment and exit")
+    parser.add_argument("--apply-credential-file", default=None, help="Apply a candidate credential file and exit")
     args = parser.parse_args(argv)
 
     import os
@@ -212,6 +384,25 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"nimbusops-agent: invalid configuration: {exc}", file=sys.stderr)
         return 2
+
+    if args.reenroll:
+        agent_mode = "telemetry-only" if cfg.telemetry_only else "executor"
+        return run_reenroll(
+            state_path=cfg.state_file,
+            token=cfg.bootstrap_token,
+            server_url=cfg.server_url,
+            agent_mode=agent_mode,
+        )
+
+    if args.apply_credential_file:
+        agent_mode = "telemetry-only" if cfg.telemetry_only else "executor"
+        return run_apply_credential_file(
+            state_path=cfg.state_file,
+            candidate_path=pathlib.Path(args.apply_credential_file),
+            server_url=cfg.server_url,
+            agent_mode=agent_mode,
+        )
+
     return run(cfg)
 
 

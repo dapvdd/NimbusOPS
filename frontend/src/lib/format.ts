@@ -14,7 +14,7 @@ export function formatBytes(bytes: number | null | undefined): string {
 }
 
 export function formatPercent(value: number | null | undefined): string {
-  if (value === null || undefined === value) return "—";
+  if (value === null || value === undefined) return "—";
   if (!Number.isFinite(value)) return "—";
   return `${value.toFixed(1)}%`;
 }

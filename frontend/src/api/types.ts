@@ -3,7 +3,7 @@
  * the dashboard: if the backend changes, these change with it.
  */
 
-export type HostStatus = "ONLINE" | "STALE" | "OFFLINE";
+export type HostStatus = "ONLINE" | "STALE" | "OFFLINE" | "REVOKED";
 
 export interface LatestMetrics {
   recorded_at: string;
@@ -20,6 +20,7 @@ export interface Host {
   id: string;
   hostname: string;
   status: HostStatus;
+  connectivity?: "ONLINE" | "STALE" | "OFFLINE";
   agent_version: string | null;
   platform: string | null;
   platform_release: string | null;
@@ -36,8 +37,10 @@ export interface Host {
   docker_enabled: boolean;
   /** Phase 4 (FR-19): environment grouping metadata. */
   environment: "PRIVATE" | "PUBLIC-CLOUD";
+  agent_mode?: "executor" | "telemetry-only" | null;
   /** S4-1b: set on lifecycle endpoints' responses; absent on list reads. */
   credential_version?: number;
+  credential_grace_until?: string | null;
 }
 
 export interface HostListResponse {
@@ -217,4 +220,27 @@ export interface HostInventory {
   received_at: string;
   age_seconds: number | null;
   containers: { id: string; names: string; image: string; state: string; managed: boolean; deployment_id: string | null }[];
+}
+
+export type OnboardingState = "WAITING" | "CONSUMED" | "EXPIRED" | "REVOKED";
+
+export interface ReadinessResponse {
+  ready: boolean;
+  database: "ok" | "degraded" | string;
+  version?: string;
+}
+
+export interface HostEventOut {
+  id: number;
+  host_id: string | null;
+  event: string;
+  actor: string;
+  detail: string | null;
+  at: string;
+  created_at: string;
+}
+
+export interface HostEventListResponse {
+  events: HostEventOut[];
+  count: number;
 }

@@ -62,9 +62,10 @@ def test_heartbeat_request_fields_are_additive_only():
     new = _extract_schema_fields(REPO_WT, "backend/app/schemas/__init__.py", "HeartbeatRequest")
     assert old <= new, f"fields removed from HeartbeatRequest: {old - new}"
     extra = new - old
-    assert extra == {"inventory"}, f"unexpected new heartbeat fields: {extra}"
+    assert extra == {"inventory", "agent_mode"}, f"unexpected new heartbeat fields: {extra}"
     # All new fields optional (additive contract): the payload default is None.
     assert "inventory" in extra
+    assert "agent_mode" in extra
 
 
 def test_heartbeat_response_fields_are_additive_only():

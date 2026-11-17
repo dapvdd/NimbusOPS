@@ -32,7 +32,7 @@ def test_fresh_db_creates_phase3b_structures(client):
 
 
 def test_new_host_defaults_pending_and_docker_disabled(client, enroll_token):
-    """A newly created host (pre-enrollment flow change) defaults to PENDING/docker off."""
+    """A newly created host has docker disabled; enrollment completes as ENROLLED."""
     resp = client.post(
         "/api/v1/agents/enroll",
         json={"hostname": "defaults-host", "enrollment_token": enroll_token},

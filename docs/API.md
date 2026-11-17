@@ -16,9 +16,9 @@ all timestamps are UTC ISO-8601. Typed errors serialize as
 | GET | `/api/v1/hosts` | All hosts with status + latest metrics |
 | GET | `/api/v1/hosts/{id}` | One host, same shape |
 | GET | `/api/v1/hosts/{id}/metrics?limit=&before=` | Telemetry history, newest first, `limit` 1–1440 (default 120) |
+| GET | `/api/v1/hosts/{id}/events?limit=` | Host audit events, newest first, `limit` 1–200 (default 50) |
 
-`GET /hosts` response (Phase 3B adds `enrollment_status` and
-`docker_enabled`; §7.1 of the Phase 3B contract):
+`GET /hosts` response (Sprint 1 adds `credential_version`, `credential_grace_until`, `agent_mode`, `connectivity`, and `status: "REVOKED"`):
 
 ```json
 {
@@ -26,7 +26,8 @@ all timestamps are UTC ISO-8601. Typed errors serialize as
     {
       "id": "uuid",
       "hostname": "web-01",
-      "status": "ONLINE | STALE | OFFLINE",
+      "status": "ONLINE | STALE | OFFLINE | REVOKED",
+      "connectivity": "ONLINE | STALE | OFFLINE",
       "agent_version": "0.1.0",
       "platform": "Linux",
       "platform_release": "6.8.0-45-generic",
@@ -42,7 +43,11 @@ all timestamps are UTC ISO-8601. Typed errors serialize as
         "disk_total_bytes": 2, "disk_used_percent": 20.0 },
       "is_revoked": false,
       "enrollment_status": "PENDING | ENROLLED | ONLINE | STALE | OFFLINE | REVOKED",
-      "docker_enabled": false
+      "docker_enabled": false,
+      "environment": "PRIVATE | PUBLIC-CLOUD",
+      "agent_mode": "executor | telemetry-only | null",
+      "credential_version": 1,
+      "credential_grace_until": "... | null"
     }
   ],
   "count": 1
@@ -73,8 +78,8 @@ all timestamps are UTC ISO-8601. Typed errors serialize as
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/api/v1/operators/bootstrap-tokens` | `{"hostname","expires_in_seconds"?}` (default 600, max 3600) → `201 {"id","hostname","token","expires_at","created_at"}` |
-| GET | `/api/v1/operators/bootstrap-tokens` | List (no token material): `id, hostname, created_at, expires_at, consumed_at, consumed_by_host_id, revoked_at` |
+| POST | `/api/v1/operators/bootstrap-tokens` | `{"hostname","intent"?, "expires_in_seconds"?}` (intent: `"enroll"` or `"reenroll"`; default expires 600, max 3600) → `201 {"id","hostname","token","expires_at","created_at"}` |
+| GET | `/api/v1/operators/bootstrap-tokens?active=&limit=` | List (no token material): `id, hostname, created_at, expires_at, consumed_at, consumed_by_host_id, revoked_at` (optional `active=true` filter and `limit` query parameters) |
 | DELETE | `/api/v1/operators/bootstrap-tokens/{id}` | Revoke an unconsumed token; idempotent; consumed → `409 BOOTSTRAP_TOKEN_CONSUMED` |
 
 `token` is returned exactly once and never stored in plaintext server-side.

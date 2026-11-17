@@ -29,10 +29,13 @@ export function SessionProvider({children}: {children: React.ReactNode}) {
   return <Context.Provider value={{user,loading,error,reload,logout}}>{children}</Context.Provider>;
 }
 
-export function Protected({children}: {children: React.ReactNode}) {
+export function Protected({children, requireRole}: {children: React.ReactNode; requireRole?: 'ADMIN' | 'VIEWER'}) {
   const session = useSession();
   const location = useLocation();
   if (session?.loading) return <p role="status" className="p-8">Checking session…</p>;
   if (!session?.user) return <Navigate to="/login" replace state={{from:location.pathname}} />;
+  if (requireRole && session.user.role !== requireRole && requireRole === 'ADMIN') {
+    return <Navigate to="/servers" replace />;
+  }
   return <>{children}</>;
 }

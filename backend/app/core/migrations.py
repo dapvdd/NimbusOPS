@@ -96,6 +96,15 @@ _NEW_HOST_COLUMNS = {
     "previous_token_expires_at": ("TIMESTAMP", None),
     # Phase 4 (FR-19): environment grouping. Existing hosts are private.
     "environment": ("VARCHAR(16)", "'PRIVATE'"),
+    # Sprint D3: agent-reported mode. No backfill — legacy = NULL = "not
+    # reported" (never guessed from docker_enabled).
+    "agent_mode": ("VARCHAR(16)", None),
+}
+
+_NEW_TOKEN_COLUMNS = {
+    # Sprint D2: intent enforced at issue and consumption. Legacy rows are
+    # 'enroll' (pre-sprint tokens were only usable for fresh enrollment).
+    "intent": ("VARCHAR(16)", "'enroll'"),
 }
 
 _NEW_OP_COLUMNS = {
@@ -119,6 +128,15 @@ _INFLIGHT_INDEX_DDL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_ops_inflight_deployment "
     "ON deployment_operations (deployment_id) "
     "WHERE status IN ('QUEUED', 'RUNNING')"
+)
+
+# Sprint D2: at most one active bootstrap token per hostname. Same fail-safe
+# rule as the in-flight index: a legacy DB with duplicate active tokens must
+# not block startup — the service-level guard still applies per transaction.
+_ACTIVE_TOKEN_INDEX_DDL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_bootstrap_tokens_active_hostname "
+    "ON bootstrap_tokens (hostname) "
+    "WHERE consumed_at IS NULL AND revoked_at IS NULL"
 )
 
 
@@ -178,6 +196,18 @@ def upgrade_phase3b(database_url: str | None = None) -> None:
                         )
                     )
 
+        # 3b. Sprint D2: bootstrap_tokens.intent (legacy backfills to 'enroll').
+        if inspect(eng).has_table("bootstrap_tokens"):
+            token_cols = {c["name"] for c in inspect(eng).get_columns("bootstrap_tokens")}
+            for col, (ddl, default) in _NEW_TOKEN_COLUMNS.items():
+                if col not in token_cols:
+                    conn.execute(text(f"ALTER TABLE bootstrap_tokens ADD COLUMN {col} {ddl}"))
+                    logger.info("migration: added bootstrap_tokens.%s", col)
+                if default is not None:
+                    conn.execute(
+                        text(f"UPDATE bootstrap_tokens SET {col} = {default} WHERE {col} IS NULL")
+                    )
+
         # 4. Indexes.
         for name, ddl in _INDEXES.items():
             conn.execute(text(ddl))
@@ -192,6 +222,18 @@ def upgrade_phase3b(database_url: str | None = None) -> None:
                     "migration: ux_ops_inflight_deployment not created; "
                     "deployment_operations still holds duplicate in-flight rows "
                     "(operator reconciliation required)"
+                )
+
+        # 4c. Sprint D2 one-active-token guard. Same fail-safe rule: legacy
+        # duplicates warn and skip instead of aborting startup.
+        if inspect(eng).has_table("bootstrap_tokens"):
+            try:
+                conn.execute(text(_ACTIVE_TOKEN_INDEX_DDL))
+            except Exception:  # noqa: BLE001 - duplicate legacy data must not block boot
+                logger.warning(
+                    "migration: ux_bootstrap_tokens_active_hostname not created; "
+                    "bootstrap_tokens still holds duplicate active tokens for a "
+                    "hostname (operator reconciliation required)"
                 )
 
         # 5. Version marker (records that the upgrade ran; not a gate).

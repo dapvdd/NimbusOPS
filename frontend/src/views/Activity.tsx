@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { Operation } from "../api/types";
-import { listRemovedServers, listSimServers } from "../lib/simRegistry";
 import { formatUtcTime } from "../lib/format";
 
 const STATUSES = ["ALL", "QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"] as const;
@@ -124,24 +123,6 @@ export default function Activity({ hostId }: { hostId?: string }) {
         >
           {loadingMore ? "Loading…" : "Load older"}
         </button>
-      )}
-      {!hostId && (
-        <section className="rounded-lg border border-amber-400/30 p-4">
-          <h2 className="text-amber-300">SIMULATED · Local registry history</h2>
-          {listSimServers().map((s) => (
-            <p key={s.id} className="mt-3 text-sm">
-              Added {s.name} · {formatUtcTime(s.created_at)}
-            </p>
-          ))}
-          {listRemovedServers().map((s, i) => (
-            <p key={`${s.id}-${i}`} className="mt-3 text-sm">
-              Removed {s.name} · {formatUtcTime(s.removed_at)}
-            </p>
-          ))}
-          <p className="mt-3 text-xs text-ink-400">
-            Browser storage only; not a durable server audit log.
-          </p>
-        </section>
       )}
     </div>
   );

@@ -129,20 +129,24 @@ function AppRow({ app, onAction }: { app: ManagedApp; onAction: () => void }) {
       {error && <p className="mt-2 text-xs text-signal-bad" role="alert">{error}</p>}
 
       <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          onClick={() => act("start")}
-          disabled={!admin || inFlight || busy !== null || app.container_state === "RUNNING"}
-          className="rounded-md border border-ink-600 bg-ink-800 px-3 py-1.5 text-xs text-ink-100 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {busy === "start" ? "Starting…" : "Start"}
-        </button>
-        <button
-          onClick={() => act("stop")}
-          disabled={!admin || inFlight || busy !== null || app.container_state !== "RUNNING"}
-          className="rounded-md border border-ink-600 bg-ink-800 px-3 py-1.5 text-xs text-ink-100 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {busy === "stop" ? "Stopping…" : "Stop"}
-        </button>
+        {admin && (
+          <>
+            <button
+              onClick={() => act("start")}
+              disabled={inFlight || busy !== null || app.container_state === "RUNNING"}
+              className="rounded-md border border-ink-600 bg-ink-800 px-3 py-1.5 text-xs text-ink-100 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {busy === "start" ? "Starting…" : "Start"}
+            </button>
+            <button
+              onClick={() => act("stop")}
+              disabled={inFlight || busy !== null || app.container_state !== "RUNNING"}
+              className="rounded-md border border-ink-600 bg-ink-800 px-3 py-1.5 text-xs text-ink-100 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {busy === "stop" ? "Stopping…" : "Stop"}
+            </button>
+          </>
+        )}
         <button
           onClick={onAction}
           className="rounded-md border border-ink-600 bg-transparent px-3 py-1.5 text-xs text-ink-300 hover:bg-ink-800"
@@ -243,6 +247,7 @@ export default function Applications({ selectedHostId }: { selectedHostId?: stri
     );
 
   const selectedHost = hosts.find((h) => h.id === hostId);
+  const selectedHostRevoked = selectedHost?.status === "REVOKED";
   const applications = (apps?.applications ?? []).filter(app => !selectedHostId || app.host_id === selectedHostId);
 
   return (
@@ -252,7 +257,8 @@ export default function Applications({ selectedHostId }: { selectedHostId?: stri
         <p className="text-sm text-ink-400">Deploy and manage approved applications on connected hosts.</p>
       </div>
 
-      {/* Deploy panel */}
+      {/* Deploy panel — ADMIN only; VIEWER never gets a disabled action. */}
+      {admin && (
       <section className="rounded-lg border border-ink-700 bg-ink-850 p-4">
         <h2 className="text-sm font-medium text-ink-100">Deploy new application</h2>
         <div className="mt-3 flex flex-wrap items-end gap-3">
@@ -288,16 +294,22 @@ export default function Applications({ selectedHostId }: { selectedHostId?: stri
           </label>
           <button
             onClick={deployAction}
-            disabled={!admin || deploying || !hostId}
+            disabled={deploying || !hostId || selectedHostRevoked}
             className="rounded-md bg-signal-info px-4 py-1.5 text-sm font-medium text-ink-950 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {deploying ? "Requesting…" : "Deploy"}
           </button>
         </div>
-        {selectedHost && selectedHost.status !== "ONLINE" && (
-          <p className="mt-2 text-xs text-amber-400">
-            Host is {selectedHost.status}; the operation will run when the agent reconnects.
+        {selectedHostRevoked ? (
+          <p className="mt-2 text-xs text-purple-300">
+            Credential revoked — re-enroll required from the host page before any deployment can run.
           </p>
+        ) : (
+          selectedHost && selectedHost.status !== "ONLINE" && (
+            <p className="mt-2 text-xs text-amber-400">
+              Host is {selectedHost.status}; the operation will run when the agent reconnects.
+            </p>
+          )
         )}
         {deployError && <p className="mt-2 text-xs text-signal-bad" role="alert">{deployError}</p>}
 
@@ -341,6 +353,7 @@ export default function Applications({ selectedHostId }: { selectedHostId?: stri
           </div>
         )}
       </section>
+      )}
 
       {/* Managed applications */}
       <section>

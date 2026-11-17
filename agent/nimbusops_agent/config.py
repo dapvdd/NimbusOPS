@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import psutil
 
@@ -175,6 +176,70 @@ def load_identity(path: pathlib.Path) -> Identity | None:
     except (ValueError, json.JSONDecodeError) as exc:
         print(f"nimbusops-agent: corrupt identity file {path}: {exc}", file=sys.stderr)
         return None
+
+
+def backup_identity(state_path: pathlib.Path, prefix: str = "agent.json.pre-reenroll-") -> pathlib.Path | None:
+    """Create a 0600 backup of state_path if it exists."""
+    state_path = pathlib.Path(state_path)
+    if not state_path.is_file():
+        return None
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    backup_path = state_path.parent / f"{prefix}{ts}"
+    data = state_path.read_bytes()
+    fd, tmp_name = tempfile.mkstemp(prefix=".bak-", suffix=".tmp", dir=str(state_path.parent))
+    tmp = pathlib.Path(tmp_name)
+    try:
+        try:
+            os.fchmod(fd, 0o600)
+        except (AttributeError, OSError, NotImplementedError):
+            pass
+        with os.fdopen(fd, "wb") as h:
+            h.write(data)
+            h.flush()
+            os.fsync(h.fileno())
+        os.replace(tmp, backup_path)
+        _restrict_permissions(backup_path)
+        return backup_path
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def restore_backup(state_path: pathlib.Path, backup_path: pathlib.Path) -> None:
+    """Restore state_path from backup_path (copies to target so backup remains)."""
+    if backup_path.is_file():
+        state_path = pathlib.Path(state_path)
+        data = backup_path.read_bytes()
+        fd, tmp_name = tempfile.mkstemp(prefix=".rst-", suffix=".tmp", dir=str(state_path.parent))
+        tmp = pathlib.Path(tmp_name)
+        try:
+            try:
+                os.fchmod(fd, 0o600)
+            except (AttributeError, OSError, NotImplementedError):
+                pass
+            with os.fdopen(fd, "wb") as h:
+                h.write(data)
+                h.flush()
+                os.fsync(h.fileno())
+            os.replace(tmp, state_path)
+            _restrict_permissions(state_path)
+        except BaseException:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
 
 
 def delete_identity(path: pathlib.Path) -> None:
