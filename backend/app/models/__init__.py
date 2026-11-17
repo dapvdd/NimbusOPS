@@ -57,6 +57,10 @@ class Host(Base):
     last_telemetry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    # Sprint 5 (§15.2): bumped on every revocation-changing credential event;
+    # provisioning candidates are fenced against this counter.
+    revocation_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+
 
 class Telemetry(Base):
     __tablename__ = "telemetry"
@@ -265,3 +269,54 @@ class InventorySnapshot(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     containers_json: Mapped[str] = mapped_column(String(65535), nullable=False, default="[]")
+
+
+# ------------------------------------------------------------------ Sprint 5
+
+
+from .provisioning import (  # noqa: E402
+    ProvisioningAttempt,
+    ProvisioningChallenge,
+    ProvisioningConnection,
+    ProvisioningCredentialCommit,
+    ProvisioningEvent,
+    ProvisioningGrant,
+    ProvisioningJob,
+    ProvisioningMachine,
+    ProvisioningOwnership,
+    ProvisioningReceipt,
+    ProvisioningRequest,
+    ProvisioningTarget,
+    ProvisioningValidation,
+)
+
+__all__ = [
+    "Base",
+    "BootstrapToken",
+    "DeploymentOperation",
+    "DeploymentTemplate",
+    "EnrollmentAudit",
+    "Host",
+    "HostEvent",
+    "InventorySnapshot",
+    "ManagedDeployment",
+    "Operator",
+    "OperatorSession",
+    "OperationEvent",
+    "ProvisioningAttempt",
+    "ProvisioningChallenge",
+    "ProvisioningConnection",
+    "ProvisioningCredentialCommit",
+    "ProvisioningEvent",
+    "ProvisioningGrant",
+    "ProvisioningJob",
+    "ProvisioningMachine",
+    "ProvisioningOwnership",
+    "ProvisioningReceipt",
+    "ProvisioningRequest",
+    "ProvisioningTarget",
+    "ProvisioningValidation",
+    "Telemetry",
+    "new_uuid",
+    "utcnow",
+]
