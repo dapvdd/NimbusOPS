@@ -21,7 +21,7 @@ const HEALTH_OK = {
   database: "ok",
 };
 
-const READY_OK = { ready: true, database: "ok", version: "0.1.0", hosts_online: 2, operations_in_flight: 0 };
+const READY_OK = { ready: true, database: "ok", version: "0.1.0" };
 const READY_DEGRADED = { ready: false, database: "degraded", version: "0.1.0" };
 
 function stubApi(overrides: { ready?: () => ReturnType<typeof jsonResponse> } = {}) {
@@ -86,7 +86,7 @@ describe("Settings", () => {
     const panel = await screen.findByTestId("readiness-degraded");
     expect(panel).toHaveTextContent(/degraded/i);
     expect(panel).not.toHaveTextContent(/cannot reach/i);
-    expect(screen.getByTestId("readiness-recovery")).toHaveTextContent(/database file path/i);
+    expect(screen.getByTestId("readiness-recovery")).toHaveTextContent(/NIMBUSOPS_DATABASE_URL/i);
     expect(screen.getByTestId("readiness-recovery")).toHaveTextContent(/logs/i);
     // A degraded control plane is diagnosed, never restarted from the UI.
     expect(screen.queryByRole("button", { name: /restart/i })).not.toBeInTheDocument();
@@ -111,13 +111,20 @@ describe("Settings", () => {
     expect(readyCalls).toBeGreaterThanOrEqual(2);
   });
 
-  it("documents deployment unit paths as copyable text, not dead app routes", async () => {
+  it("documents the reviewed deployment examples as copyable paths, not dead app routes", async () => {
     vi.stubGlobal("fetch", stubApi());
     renderSettings();
 
     const reference = await screen.findByTestId("deployment-reference");
-    expect(reference).toHaveTextContent(/\/etc\/systemd\/system\/nimbusops-backend\.service/);
-    expect(reference).toHaveTextContent(/not installed by nimbusops/i);
+    // Real artifact names from deploy/examples — no invented unit names.
+    expect(reference).toHaveTextContent(/nimbusops-api\.service\.example/);
+    expect(reference).toHaveTextContent(/nimbusops-agent-telemetry\.service\.example/);
+    expect(reference).not.toHaveTextContent(/nimbusops-backend/);
+    // The environment contract uses the backend's real NIMBUSOPS_ prefix.
+    expect(reference).toHaveTextContent(/NIMBUSOPS_DATABASE_URL=/);
+    expect(reference).toHaveTextContent(/NIMBUSOPS_BROWSER_ORIGINS=/);
+    expect(reference).not.toHaveTextContent(/NIMBOPS_(?!S)/);
+    expect(reference).toHaveTextContent(/Nothing is installed by NimbusOps/i);
     expect(reference.querySelectorAll('a[href*="deploy/examples"]').length).toBe(0);
   });
 });

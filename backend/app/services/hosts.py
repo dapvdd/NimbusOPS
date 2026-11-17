@@ -119,18 +119,20 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
                 "hostname already enrolled; an operator-issued bootstrap token is required to re-enroll",
             )
         # Re-enrollment: rotate the token, keep host identity (id stable).
+        # via_bootstrap is guaranteed True here: the not-via_bootstrap case
+        # raised 409 above, so the legacy re-enroll spellings are gone.
         token = generate_agent_token()
         existing.agent_token_hash = hash_token(token)
         existing.is_revoked = False
         existing.revoked_at = None
         existing.enrollment_status = "ENROLLED"
-        existing.credential_version = (existing.credential_version or 1) + (1 if via_bootstrap else 0)
+        existing.credential_version = (existing.credential_version or 1) + 1
         record_host_event(
             db,
             existing.id,
-            "RE_ENROLLED" if via_bootstrap else "CREDENTIAL_ROTATED",
+            "RE_ENROLLED",
             actor="agent",
-            detail=f"hostname={req.hostname} via={'bootstrap' if via_bootstrap else 'legacy-token'}",
+            detail=f"hostname={req.hostname} via=bootstrap",
         )
         db.add(
             EnrollmentAudit(
@@ -141,9 +143,8 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
         )
         db.commit()
         logger.info(
-            "enrollment: re-enrolled host hostname=%s via=%s (token rotated)",
+            "enrollment: re-enrolled host hostname=%s via=bootstrap (token rotated)",
             req.hostname,
-            "bootstrap" if via_bootstrap else "legacy",
         )
         return existing, token
 

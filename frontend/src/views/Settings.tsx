@@ -16,16 +16,29 @@ import { Button } from "../ui/Button";
 import { formatUtcTime } from "../lib/format";
 
 const UNIT_PATHS = [
-  { label: "Backend unit", value: "/etc/systemd/system/nimbusops-backend.service" },
-  { label: "Agent unit", value: "/etc/systemd/system/nimbusops-agent.service" },
-  { label: "Application directory", value: "/opt/nimbusops" },
+  { label: "API unit example", value: "deploy/examples/systemd/nimbusops-api.service.example" },
+  { label: "Web unit example", value: "deploy/examples/systemd/nimbusops-web.service.example" },
+  {
+    label: "Agent unit example (telemetry)",
+    value: "deploy/examples/systemd/nimbusops-agent-telemetry.service.example",
+  },
+  {
+    label: "Agent unit example (executor)",
+    value: "deploy/examples/systemd/nimbusops-agent-executor.service.example",
+  },
+  {
+    label: "Enrollment wrapper example",
+    value: "deploy/examples/bootstrap-enroll.sh.example",
+  },
 ];
 
 const ENVIRONMENT_CONTRACT = [
-  "NIMBOPS_API_URL=https://<control-plane-host>/api/v1",
-  "NIMBOPS_AGENT_TOKEN_FILE=/etc/nimbusops/agent-token   # mode 0600, never argv or a URL",
-  "NIMBOPS_DB_PATH=/var/lib/nimbusops/nimbusops.db",
-  "NIMBOPS_LOG_LEVEL=info",
+  "NIMBUSOPS_DATABASE_URL=sqlite:///<state-dir>/nimbusops.sqlite3",
+  "NIMBUSOPS_ENROLLMENT_MODE=bootstrap",
+  "NIMBUSOPS_TOKEN_PEPPER=<32+ random bytes>            # backend.env mode 0600",
+  "NIMBUSOPS_BROWSER_ORIGINS=https://<ui-origin>        # exact origin, never *",
+  "NIMBUSOPS_CORS_ORIGINS=https://<ui-origin>           # exact origin, never *",
+  "NIMBUSOPS_SESSION_COOKIE_SECURE=true                 # false only for loopback HTTP preview",
 ].join("\n");
 
 export default function Settings() {
@@ -147,8 +160,11 @@ export default function Settings() {
             <div data-testid="readiness-recovery" className="space-y-1 text-xs text-ink-200">
               <p className="font-semibold">Diagnose on the server:</p>
               <ol className="list-decimal space-y-1 pl-5 text-ink-300">
-                <li>Process: confirm the backend service is running (systemctl status nimbusops-backend).</li>
-                <li>Database: check the database file path and permissions (NIMBOPS_DB_PATH).</li>
+                <li>
+                  Process: confirm the API service is running — the unit you installed from
+                  deploy/examples/systemd/nimbusops-api.service.example (systemctl status &lt;that-unit&gt;).
+                </li>
+                <li>Database: check NIMBUSOPS_DATABASE_URL — path, permissions, and disk space.</li>
                 <li>Logs: inspect the control-plane service logs for the failing dependency.</li>
               </ol>
               <p className="text-ink-400">This console does not restart services.</p>
@@ -171,11 +187,6 @@ export default function Settings() {
           <Fact label="Database" value={health?.database ?? readiness?.database ?? "unknown"} />
           <Fact label="Version" value={health?.version ?? readiness?.version ?? "unknown"} />
           <Fact label="Build" value={health?.build ?? "unknown"} />
-          <Fact label="Hosts online" value={readiness?.hosts_online !== undefined ? String(readiness.hosts_online) : "unknown"} />
-          <Fact
-            label="Operations in flight"
-            value={readiness?.operations_in_flight !== undefined ? String(readiness.operations_in_flight) : "unknown"}
-          />
           <Fact label="Probe latency" value={latencyMs !== null ? `${latencyMs} ms` : "unknown"} />
           <Fact label="Last check" value={checkedAt ? formatUtcTime(checkedAt) : "never"} />
         </dl>
@@ -193,8 +204,10 @@ export default function Settings() {
           Deployment reference
         </h2>
         <p className="text-xs text-ink-400">
-          These unit paths are the deployment contract. They are not installed by NimbusOps and are not edited from this
-          console; install or repair them on the server.
+          These are the reviewed example files in this repository. Nothing is installed by
+          NimbusOps and nothing is edited from this console; an operator copies each example,
+          substitutes its @TOKEN@ values, and installs it on the server (see
+          deploy/examples/README.md).
         </p>
 
         <div className="space-y-3">

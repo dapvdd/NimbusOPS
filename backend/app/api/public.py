@@ -34,9 +34,13 @@ def _as_utc(dt: datetime) -> datetime:
 def _to_host_out(host, latest: Telemetry | None) -> HostOut:
     stale_s, offline_s = require_status_context(host_service)
     now = datetime.now(timezone.utc)
+    # Revocation has two stored spellings (is_revoked flag; tombstoned
+    # enrollment_status). Canonicalize so the wire contract is unambiguous:
+    # is_revoked is True and enrollment_status is REVOKED for both.
+    revoked = bool(host.is_revoked) or host.enrollment_status == "REVOKED"
     connectivity = compute_status(host.last_seen_at, now, stale_s, offline_s)
     status = effective_status(
-        is_revoked=bool(host.is_revoked),
+        is_revoked=revoked,
         enrollment_status=host.enrollment_status,
         last_seen_at=host.last_seen_at,
         now=now,
@@ -76,8 +80,8 @@ def _to_host_out(host, latest: Telemetry | None) -> HostOut:
             if latest is not None
             else None
         ),
-        is_revoked=host.is_revoked,
-        enrollment_status=host.enrollment_status,
+        is_revoked=revoked,
+        enrollment_status="REVOKED" if revoked else host.enrollment_status,
         docker_enabled=bool(host.docker_enabled),
         environment=host.environment,
         agent_mode=host.agent_mode,
@@ -117,7 +121,11 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
     responses={503: {"model": ReadinessResponse}},
 )
 def readiness(response: Response, db: Session = Depends(get_db)) -> ReadinessResponse:
-    """Readiness probe: 503 while a required dependency is unavailable."""
+    """Readiness probe: 503 while a required dependency is unavailable.
+
+    Exempt from operator read auth (load balancers probe anonymously, like
+    /health); the exemption lives in operators.require_read.
+    """
     database = "ok"
     try:
         from sqlalchemy import text

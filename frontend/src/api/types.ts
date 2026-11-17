@@ -228,8 +228,6 @@ export interface ReadinessResponse {
   ready: boolean;
   database: "ok" | "degraded" | string;
   version?: string;
-  hosts_online?: number;
-  operations_in_flight?: number;
 }
 
 export interface HostEventOut {

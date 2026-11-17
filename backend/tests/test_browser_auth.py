@@ -37,6 +37,17 @@ def test_anonymous_operational_reads_rejected(client, path):
     assert client.get('/api/v1' + path).status_code == 401
 
 
+def test_anonymous_health_ok_but_readiness_unlisted(client):
+    """/api/v1/readiness does not exist: the readiness probe is /api/v1/ready.
+
+    Liveness (/health) stays anonymous for load balancers; the retired
+    /readiness path must not be an authenticated operational route either —
+    it simply no longer exists (404), and the auth exemption is gone.
+    """
+    assert client.get('/api/v1/health').status_code == 200
+    assert client.get('/api/v1/readiness').status_code == 404
+
+
 def test_cookie_session_restore_logout_and_csrf(client, accounts):
     r = login(client)
     assert r.status_code == 200

@@ -23,6 +23,7 @@ function Console() {
         <Route path="/servers" element={<Servers />} />
         <Route path="/servers/new" element={<Protected requireRole="ADMIN"><Onboarding /></Protected>} />
         <Route path="/servers/:hostId" element={<ServerDetail />} />
+        {/* /deployments is a kept-for-bookmarks alias of /applications. */}
         <Route path="/deployments" element={<Applications />} />
         <Route path="/activity" element={<Activity />} />
         <Route path="/settings" element={<Settings />} />

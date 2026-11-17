@@ -119,6 +119,54 @@ describe("Onboarding wizard", () => {
     expect(allCodeText).not.toContain("--token");
   });
 
+  it("does not issue a token when the duplicate check could not run", async () => {
+    let listFailedOnce = true; // first Continue: fleet lookup fails
+    const postIssued: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/hosts")) {
+          if (listFailedOnce) {
+            listFailedOnce = false;
+            return { ok: false, status: 503, json: async () => ({ error: { code: "UNAVAILABLE", message: "control plane busy" } }) };
+          }
+          return { ok: true, status: 200, json: async () => ({ hosts: [], total: 0 }) };
+        }
+        if (url.includes("/operators/bootstrap-tokens") && init?.method === "POST") {
+          postIssued.push(url);
+          return {
+            ok: true,
+            status: 201,
+            json: async () => ({ id: "bt-x", hostname: "blocked-host", token: "tok", expires_at: new Date(Date.now() + 600_000).toISOString() }),
+          };
+        }
+        return { ok: true, status: 200, json: async () => ({}) };
+      })
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/servers/new"]}>
+        <Routes>
+          <Route path="/servers/new" element={<Onboarding />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText(/hostname/i), { target: { value: "blocked-host" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    // The wizard explains the failure and stays on step 1; no token is issued.
+    expect(await screen.findByText(/duplicate check failed/i)).toBeInTheDocument();
+    expect(postIssued).toHaveLength(0);
+
+    // Once the fleet is reachable the wizard continues normally.
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    expect(await screen.findByText(/telemetry only/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /generate enrollment token/i }));
+    await waitFor(() => expect(postIssued).toHaveLength(1));
+  });
+
   it("handles BOOTSTRAP_TOKEN_ACTIVE with revoke and reissue action", async () => {
     let callCount = 0;
     vi.stubGlobal(

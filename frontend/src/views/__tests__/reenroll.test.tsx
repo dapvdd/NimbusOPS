@@ -127,7 +127,7 @@ it("viewer role does not see re-enroll or unregister controls", async () => {
 it("sim-* host ids never reach /hosts/{id}/re-enroll", async () => {
   // The client-side guard rejects sim ids before any fetch is attempted.
   const { api } = await import("../../api/client");
-  await expect(api.issueReenrollBootstrap("sim-1234")).rejects.toThrow();
+  await expect(api.reenrollHost("sim-1234")).rejects.toThrow();
   const calls = vi.mocked(fetch).mock.calls.filter(([u]) => String(u).includes("re-enroll"));
   expect(calls.length).toBe(0);
 });

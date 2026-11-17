@@ -12,7 +12,10 @@ Pins design D2:
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from backend.app.services import enrollment as enrollment_service
+from backend.app.models import Operator
 from backend.tests.conftest import auth_headers
 from backend.tests.test_bootstrap_enrollment import _admin, _issue
 
@@ -181,3 +184,74 @@ def test_intent_recorded_on_row(client, db_session):
     _issue(client, admin, "intent-host", intent="reenroll")
     row = db_session.query(BootstrapToken).filter(BootstrapToken.hostname == "intent-host").one()
     assert row.intent == "reenroll"
+
+
+def test_concurrent_issue_second_gets_409_before_insert(client, db_session):
+    """Pre-insert active-token guard: the second issuance fails closed with
+    409 BOOTSTRAP_TOKEN_ACTIVE even when both run before either first
+    issuance commits (the race the partial unique index only catches later),
+    and no second row is created."""
+    from backend.app.core.db import SessionLocal
+    from backend.app.services import enrollment as enrollment_service
+    from backend.app.core.errors import ApiError
+    from backend.app.core.codes import ErrorCode
+    from backend.app.models import BootstrapToken
+    from backend.tests.test_operator_auth import _seed_operator
+
+    admin = _admin(client, db_session)
+    first = _issue(client, admin, "race-host")
+    assert first.status_code == 201
+
+    # Simulate a concurrent issuer holding its own session/transaction.
+    concurrency_db = SessionLocal()
+    try:
+        class _Op:
+            username = "admin"
+
+        _Op.id = _seed_operator(db_session).id
+        with pytest.raises(ApiError) as excinfo:
+            enrollment_service.issue_bootstrap_token(concurrency_db, _Op, "race-host")
+        assert excinfo.value.status == 409
+        assert excinfo.value.code == ErrorCode.BOOTSTRAP_TOKEN_ACTIVE
+    finally:
+        concurrency_db.rollback()
+        concurrency_db.close()
+
+    # Exactly one active token row exists for the hostname.
+    rows = db_session.query(BootstrapToken).filter(BootstrapToken.hostname == "race-host").all()
+    assert len(rows) == 1
+
+
+def test_concurrent_issue_race_window_before_any_commit(client, db_session):
+    """True race window: two issuers on the same hostname inside one open
+    transaction. The second issuance must fail closed with 409 via the
+    pre-insert guard (never an IntegrityError/500, never two active rows),
+    and the first row must survive the failed second call."""
+    from backend.app.core.db import SessionLocal
+    from backend.app.services import enrollment as enrollment_service
+    from backend.app.core.errors import ApiError
+    from backend.app.core.codes import ErrorCode
+    from backend.app.models import BootstrapToken
+    from backend.tests.test_operator_auth import _seed_operator
+
+    class _Op:
+        username = "admin"
+
+    _Op.id = _seed_operator(db_session).id
+
+    issuer = SessionLocal()
+    try:
+        # First issuance commits a still-active token.
+        row_a, plaintext_a = enrollment_service.issue_bootstrap_token(issuer, _Op, "window-host")
+        # Second issuance in the same session: an uncommitted-then-committed
+        # active row is already visible; the pre-insert guard must 409 before
+        # any INSERT, leaving exactly one row.
+        with pytest.raises(ApiError) as excinfo:
+            enrollment_service.issue_bootstrap_token(issuer, _Op, "window-host")
+        assert excinfo.value.status == 409
+        assert excinfo.value.code == ErrorCode.BOOTSTRAP_TOKEN_ACTIVE
+        rows = issuer.query(BootstrapToken).filter(BootstrapToken.hostname == "window-host").all()
+        assert len(rows) == 1
+    finally:
+        issuer.rollback()
+        issuer.close()

@@ -62,4 +62,27 @@ describe("agentCommands security invariants", () => {
     expect(cmds.foregroundTab).toContain("--bootstrap-token-file /var/lib/nimbusops-agent/bootstrap.token");
     expect(cmds.foregroundTab).toContain("--server-url https://ops.example.internal");
   });
+
+  it("passes the wrapper env explicitly — an env file is not inherited by sudo", () => {
+    expect(cmds.systemdTab).toContain("sudo -u nimbusops env \\");
+    expect(cmds.systemdTab).toContain("NIMBUSOPS_INSTALL_DIR=/opt/nimbusops");
+  });
+
+  it("invokes the reviewed example script by its real path", () => {
+    expect(cmds.systemdTab).toContain(
+      "bash /opt/nimbusops/deploy/examples/bootstrap-enroll.sh.example",
+    );
+  });
+
+  it("never names a unit that does not ship — the operator installs the example first", () => {
+    expect(cmds.systemdTab).toContain("nimbusops-agent-telemetry.service.example");
+    expect(cmds.systemdTab).toContain("<name-of-the-unit-you-installed>");
+    expect(cmds.systemdTab).not.toContain("systemctl enable --now nimbusops-agent\n");
+  });
+
+  it("executor mode selects the executor unit example and drops --telemetry-only", () => {
+    const exec = installCommands("https://ops.example.internal", "/var/lib/nimbusops-agent", "executor");
+    expect(exec.systemdTab).toContain("nimbusops-agent-executor.service.example");
+    expect(exec.foregroundTab).not.toContain("--telemetry-only");
+  });
 });

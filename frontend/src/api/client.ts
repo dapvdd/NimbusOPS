@@ -154,10 +154,6 @@ export const api = {
   },
   listHosts: () => request<HostListResponse>("/hosts"),
   getHost: (id: string) => request<Host>(`/hosts/${encodeURIComponent(id)}`),
-  getHostEvents: (id: string, limit?: number) => {
-    const qs = limit !== undefined ? `?limit=${limit}` : "";
-    return request<HostEventListResponse>(`/hosts/${encodeURIComponent(id)}/events${qs}`);
-  },
   listHostEvents: (id: string, limit?: number) => {
     const qs = limit !== undefined ? `?limit=${limit}` : "";
     return request<HostEventListResponse>(`/hosts/${encodeURIComponent(id)}/events${qs}`);
@@ -223,12 +219,6 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(gracePeriodSeconds !== undefined ? { grace_period_seconds: gracePeriodSeconds } : {}),
-    }),
-  issueReenrollBootstrap: (id: string) =>
-    request<ReenrollResponse>(`/hosts/${encodeURIComponent(id)}/re-enroll`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ new_bootstrap_token: true }),
     }),
   reenrollHost: (id: string) =>
     request<ReenrollResponse>(`/hosts/${encodeURIComponent(id)}/re-enroll`, {

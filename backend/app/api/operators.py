@@ -60,7 +60,10 @@ def resolve_request(request: Request, db: Session, authorization: str | None):
 
 
 def require_read(request: Request, db: Session = Depends(get_db)) -> None:
-    if request.url.path in ("/api/v1/health", "/api/v1/ready", "/api/v1/readiness"):
+    # Anonymous probes for load balancers: liveness (/health) and the
+    # readiness probe (/ready — 503 as data, see public.readiness). The
+    # retired "/readiness" alias no longer exists and is no longer exempted.
+    if request.url.path in ("/api/v1/health", "/api/v1/ready"):
         return
     if request.method == "GET":
         resolve_request(request, db, request.headers.get("authorization"))

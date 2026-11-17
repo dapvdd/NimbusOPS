@@ -3,7 +3,7 @@
  * UI states, and honest display of missing/stale/offline data.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Overview from "../Overview";
@@ -44,11 +44,17 @@ const hostOnline = {
   is_revoked: false,
 };
 
-// Keep intervals from leaking.
+// Keep intervals from leaking. Every registered poll callback is captured so
+// tests can drive a refresh manually (the interval never fires under the mock).
+const pollHandlers: Array<() => void> = [];
 beforeEach(() => {
-  vi.spyOn(window, "setInterval").mockReturnValue(1 as unknown as number);
+  vi.spyOn(window, "setInterval").mockImplementation(((handler: TimerHandler) => {
+    pollHandlers.push(handler as () => void);
+    return pollHandlers.length as unknown as number;
+  }) as typeof window.setInterval);
 });
 afterEach(() => {
+  pollHandlers.length = 0;
   vi.restoreAllMocks();
 });
 
@@ -233,6 +239,78 @@ describe("Overview dashboard", () => {
     await waitFor(() => expect(screen.getByTestId("count-awaiting")).toHaveTextContent("1"));
     expect(screen.getByTestId("needs-attention")).toHaveTextContent(/pending-vm/i);
     expect(screen.getByTestId("needs-attention")).toHaveTextContent(/expir/i);
+  });
+
+  it("shows the awaiting count as unknown, never zero, when the token list cannot be read", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const path = String(url);
+      if (path.includes("/operators/bootstrap-tokens")) {
+        // ADMIN-only endpoint behind a VIEWER session.
+        return jsonResponse({ error: { code: "OPERATOR_FORBIDDEN", message: "ADMIN role required" } }, 403);
+      }
+      if (path.includes("/operations")) {
+        return jsonResponse({ operations: [], count: 0, total: 0, offset: 0 });
+      }
+      if (path.includes("/health")) {
+        return jsonResponse({ status: "ok", service: "nimbusops", version: "1", build: "b", server_time: new Date().toISOString(), database: "ok" });
+      }
+      return jsonResponse({ hosts: [hostOnline], count: 1 });
+    }));
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("count-awaiting")).toHaveTextContent("—"));
+    expect(screen.getByTestId("count-awaiting")).not.toHaveTextContent("0");
+    // And the page says why instead of implying an empty enrollment queue.
+    expect(screen.getByTestId("count-awaiting")).toHaveAccessibleDescription(/unavailable/i);
+  });
+
+  it("marks the data as from the previous poll when a refresh fails after success", async () => {
+    let fail = false;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (fail) {
+        // Host reads fail; everything else succeeds. The page keeps the last
+        // good fleet and must label it as such.
+        if (String(url).includes("/hosts")) throw new TypeError("network down");
+        const p = String(url);
+        if (p.includes("/operators/bootstrap-tokens")) return jsonResponse({ tokens: [], count: 0 });
+        if (p.includes("/operations")) return jsonResponse({ operations: [], count: 0, total: 0, offset: 0 });
+        if (p.includes("/health")) {
+          return jsonResponse({ status: "ok", service: "nimbusops", version: "1", build: "b", server_time: new Date().toISOString(), database: "ok" });
+        }
+      }
+      const path = String(url);
+      if (path.includes("/operators/bootstrap-tokens")) return jsonResponse({ tokens: [], count: 0 });
+      if (path.includes("/operations")) return jsonResponse({ operations: [], count: 0, total: 0, offset: 0 });
+      if (path.includes("/health")) {
+        return jsonResponse({ status: "ok", service: "nimbusops", version: "1", build: "b", server_time: new Date().toISOString(), database: "ok" });
+      }
+      return jsonResponse({ hosts: [hostOnline], count: 1 });
+    }));
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("refresh-status")).toBeInTheDocument());
+    fail = true;
+    // The suite mocks window.setInterval (no automatic 30s poll), so drive the
+    // page's own registered poll callback once with the host feed failing.
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const callsBefore = fetchMock.mock.calls.length;
+    // The suite mocks window.setInterval (no automatic 30s poll), so drive the
+    // page's own registered poll callback once with the host feed failing.
+    // testing-library registers its own timer bookkeeping handler, so run the
+    // captured handlers until one of them issues new fetches.
+    await act(async () => {
+      const before = fetchMock.mock.calls.length;
+      for (const handler of pollHandlers) {
+        handler();
+        await Promise.resolve();
+        await Promise.resolve();
+        if (fetchMock.mock.calls.length > before) break;
+      }
+    });
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore));
+    await waitFor(() =>
+      expect(screen.getByTestId("refresh-status")).toHaveTextContent(/last refresh failed/i),
+    );
+    // The previously loaded fleet is still shown, clearly stale.
+    expect(screen.getByTestId("fleet-table")).toBeInTheDocument();
   });
 
   it("flags docker_enabled hosts whose agent reports telemetry-only mode", async () => {

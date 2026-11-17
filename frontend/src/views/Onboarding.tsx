@@ -25,6 +25,7 @@ export default function Onboarding() {
   // Host existence check state
   const [existingHost, setExistingHost] = useState<Host | null>(null);
   const [checkingFleet, setCheckingFleet] = useState(false);
+  const [fleetCheckError, setFleetCheckError] = useState<string | null>(null);
 
   // Token issuance state
   const [issuing, setIssuing] = useState(false);
@@ -102,6 +103,7 @@ export default function Onboarding() {
 
     setCheckingFleet(true);
     setExistingHost(null);
+    setFleetCheckError(null);
     try {
       const fleet = await api.listHosts();
       const existing = findHostByHostname(fleet.hosts, trimmed);
@@ -110,9 +112,15 @@ export default function Onboarding() {
         return;
       }
       setStep("mode");
-    } catch {
-      // If listing hosts fails, let user proceed to next step
-      setStep("mode");
+    } catch (err) {
+      // The duplicate check could not run. Issuing an 'enroll' token anyway
+      // would hand the operator a token that can never be consumed
+      // (HOSTNAME_TAKEN at consumption). Stay on this step and say why.
+      setFleetCheckError(
+        err instanceof ApiFailure
+          ? `Could not check whether ${trimmed} is already enrolled: ${err.message}`
+          : "Could not check whether this hostname is already enrolled. Retry before issuing a token.",
+      );
     } finally {
       setCheckingFleet(false);
     }
@@ -248,12 +256,21 @@ export default function Onboarding() {
                 onChange={(e) => {
                   setHostname(e.target.value);
                   setExistingHost(null);
+                  setFleetCheckError(null);
                 }}
                 placeholder="e.g. edge-router-01"
                 className="w-full rounded-lg border border-ink-600 bg-ink-900 px-3 py-2 text-sm text-ink-100 focus:border-signal-info focus:outline-none"
                 autoFocus
               />
             </Field>
+
+            {fleetCheckError && (
+              <InlineAlert variant="bad" title="Duplicate check failed">
+                {fleetCheckError} The check must succeed before a token can be issued, otherwise
+                the token could never be consumed (the control plane rejects enrollment of an
+                existing hostname).
+              </InlineAlert>
+            )}
 
             {existingHost && (
               <InlineAlert
@@ -421,7 +438,10 @@ export default function Onboarding() {
           <CopyField value={tokenData.token} label="Bootstrap Token" />
 
           <InlineAlert variant="warn" title="Single-Use Security Notice">
-            This token is valid for 10 minutes and will be consumed immediately when the agent enrolls. If you leave or refresh, you must issue a new token.
+            This token is valid for the TTL the control plane issued (10 minutes by default) and
+            will be consumed immediately when the agent enrolls. If you leave or refresh without
+            enrolling, revoke this token from Settings and issue a new one — or simply let it
+            expire.
           </InlineAlert>
 
           <div className="flex justify-between items-center pt-2">
@@ -579,6 +599,16 @@ export default function Onboarding() {
             </div>
           )}
 
+          {tokenExpired && !hostRecord && (
+            <div className="flex items-center gap-3 text-xs text-ink-300">
+              <div className="h-2 w-2 rounded-full bg-signal-bad" />
+              <span>
+                The token has expired without being consumed. Nothing enrolled; issue a new token
+                from step 2 to try again.
+              </span>
+            </div>
+          )}
+
           <div className="flex justify-between items-center pt-2">
             <Button
               type="button"
@@ -596,6 +626,9 @@ export default function Onboarding() {
                   }
                   const fh = findHostByHostname(hostRes.hosts, hostname);
                   if (fh) setHostRecord(fh);
+                } catch {
+                  // A failed manual refresh keeps the previous state; polling
+                  // continues and the last-read values stay visible.
                 } finally {
                   setPolling(false);
                 }

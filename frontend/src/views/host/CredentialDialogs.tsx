@@ -146,7 +146,7 @@ export function ReenrollDialog({
   isOpen,
   onClose,
   onSuccess,
-  pollIntervalMs = 200,
+  pollIntervalMs = 1000,
 }: ReenrollDialogProps) {
   const [issued, setIssued] = useState<{ token: string; expiresAt: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -155,12 +155,18 @@ export function ReenrollDialog({
   const [enrolledSuccess, setEnrolledSuccess] = useState(false);
 
   const initialVersion = useRef(host.credential_version ?? 1);
+  // `undefined` = not captured yet. The baseline must be a FRESH post-issuance
+  // reading: a host that reported before revocation still has an old non-null
+  // last_seen_at, and using it would declare success at token consumption
+  // instead of at the first heartbeat with the new credential.
+  const baselineSeen = useRef<string | null | undefined>(undefined);
   const onSuccessRef = useLatest(onSuccess);
 
   const requestReenroll = async (): Promise<boolean> => {
     setBusy(true);
     setError(null);
     setActiveTokenConflict(null);
+    baselineSeen.current = undefined;
     try {
       const res = await api.reenrollHost(host.id);
       setIssued({
@@ -192,6 +198,7 @@ export function ReenrollDialog({
       setActiveTokenConflict(null);
       setEnrolledSuccess(false);
       setBusy(false);
+      baselineSeen.current = undefined;
       return;
     }
     initialVersion.current = host.credential_version ?? 1;
@@ -219,7 +226,8 @@ export function ReenrollDialog({
   };
 
   // Polling confirms re-enrollment via credential_version + is_revoked=false
-  // + last_seen_at. Never the RE_ENROLLED event string.
+  // + a heartbeat that CHANGED after issuance. Never the RE_ENROLLED event
+  // string, and never mere presence of an old last_seen_at.
   useEffect(() => {
     if (!isOpen || !issued || enrolledSuccess) return;
 
@@ -230,7 +238,16 @@ export function ReenrollDialog({
         const current = await api.getHost(host.id);
         if (stopped) return;
         const versionBumped = (current.credential_version ?? 0) > initialVersion.current;
-        const activeSeen = !current.is_revoked && current.last_seen_at !== null;
+        if (baselineSeen.current === undefined) {
+          // First successful reading: capture the pre-enrollment heartbeat as
+          // the baseline; success requires a DIFFERENT (later) heartbeat.
+          baselineSeen.current = current.last_seen_at;
+          return;
+        }
+        const activeSeen =
+          !current.is_revoked &&
+          current.last_seen_at !== null &&
+          current.last_seen_at !== baselineSeen.current;
         if (versionBumped && activeSeen) {
           stopped = true;
           setEnrolledSuccess(true);
@@ -315,10 +332,13 @@ export function ReenrollDialog({
         )}
 
         {enrolledSuccess && (
-          <div className="space-y-3 rounded-lg border border-signal-good/40 bg-signal-good/10 p-4 text-sm text-signal-good">
+          <div
+            data-testid="reenroll-success"
+            className="space-y-3 rounded-lg border border-signal-good/40 bg-signal-good/10 p-4 text-sm text-signal-good"
+          >
             <p className="font-semibold">Host successfully re-enrolled!</p>
             <p className="text-xs text-ink-300">
-              {host.hostname} has connected with new credentials and is actively reporting.
+              {host.hostname} has connected with its new credential and sent a fresh heartbeat.
             </p>
           </div>
         )}

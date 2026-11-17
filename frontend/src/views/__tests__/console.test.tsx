@@ -115,7 +115,15 @@ it("redirects the legacy /hosts/:hostId route to /servers/:hostId", async () => 
       }
       if (path.includes("/operators/session/csrf")) return { ok: true, json: async () => ({ csrf_token: "csrf-1" }) };
       if (path.endsWith("/hosts")) return { ok: true, json: async () => ({ hosts: [legacy], count: 1 }) };
-      if (path.includes("/events")) return { ok: true, json: async () => ({ events: [], count: 0 }) };
+      if (path.includes("/events")) {
+        return {
+          ok: true,
+          json: async () => ({
+            events: [{ id: 1, host_id: legacy.id, event: "ENROLLED", actor: "test", detail: null, at: new Date().toISOString(), created_at: new Date().toISOString() }],
+            count: 1,
+          }),
+        };
+      }
       if (path.includes("/metrics")) return { ok: true, json: async () => ({ host_id: legacy.id, points: [], count: 0 }) };
       return { ok: true, json: async () => legacy };
     }),

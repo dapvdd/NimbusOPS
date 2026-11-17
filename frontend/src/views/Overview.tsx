@@ -63,8 +63,13 @@ export default function Overview() {
   const [tokens, setTokens] = useState<BootstrapTokenInfo[]>([]);
   const [operations, setOperations] = useState<Operation[]>([]);
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  // Availability of each feed. A feed that could not be read (e.g. the ADMIN-only
+  // token list behind a VIEWER session) must render as "unknown", never as an
+  // authoritative zero.
+  const [availability, setAvailability] = useState({ tokens: true, operations: true, health: true });
   const [error, setError] = useState<ApiFailure | null>(null);
   const [loading, setLoading] = useState(true);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,14 +89,24 @@ export default function Overview() {
     }
     if (tokensResult.status === "fulfilled") {
       setTokens(tokensResult.value?.tokens ?? []);
+      setAvailability((prev) => ({ ...prev, tokens: true }));
+    } else {
+      setAvailability((prev) => ({ ...prev, tokens: false }));
     }
     if (opsResult.status === "fulfilled") {
       setOperations(opsResult.value?.operations ?? []);
+      setAvailability((prev) => ({ ...prev, operations: true }));
+    } else {
+      setAvailability((prev) => ({ ...prev, operations: false }));
     }
     if (healthResult.status === "fulfilled") {
       setHealth(healthResult.value ?? null);
+      setAvailability((prev) => ({ ...prev, health: true }));
+    } else {
+      setAvailability((prev) => ({ ...prev, health: false }));
     }
 
+    setLastUpdatedAt(Date.now());
     setLoading(false);
   }, []);
 
@@ -215,9 +230,15 @@ export default function Overview() {
     else if (status === "STALE") counts.stale += 1;
     else if (status === "OFFLINE") counts.offline += 1;
   }
-  const awaiting = tokens.filter((token) => isLiveToken(token, now)).length;
+  const awaiting = availability.tokens ? tokens.filter((token) => isLiveToken(token, now)).length : null;
   const allClear =
-    hostList.length > 0 && attention.length === 0 && health?.status === "ok" && health.database === "ok";
+    hostList.length > 0 &&
+    attention.length === 0 &&
+    availability.tokens &&
+    availability.operations &&
+    availability.health &&
+    health?.status === "ok" &&
+    health.database === "ok";
 
   const fleet = [...hostList].sort((a, b) => {
     const rank = attentionRank(a) - attentionRank(b);
@@ -239,8 +260,23 @@ export default function Overview() {
         <CountCard label="Stale" value={counts.stale} accent="text-signal-warn" />
         <CountCard label="Offline" value={counts.offline} accent="text-signal-bad" />
         <CountCard label="Revoked" value={counts.revoked} accent="text-purple-300" />
-        <CountCard label="Awaiting" value={awaiting} accent="text-signal-info" />
+        <CountCard
+          label="Awaiting"
+          value={awaiting}
+          hint={awaiting === null ? "token list unavailable" : undefined}
+          accent="text-signal-info"
+        />
       </div>
+
+      {(lastUpdatedAt !== null || error) && (
+        <p className="text-xs text-ink-500" data-testid="refresh-status">
+          {error
+            ? `Last refresh failed (${error.message}); showing data from the previous poll.`
+            : lastUpdatedAt !== null
+              ? `Updated ${formatUtcTime(new Date(lastUpdatedAt).toISOString())} · polls every 30s`
+              : null}
+        </p>
+      )}
 
       {allClear && (
         <div
@@ -337,7 +373,11 @@ export default function Overview() {
           </Link>
         </div>
 
-        {operations.length === 0 ? (
+        {!availability.operations ? (
+          <p className="text-sm text-signal-warn" role="status">
+            Operation history could not be read (requires an ADMIN session); nothing is inferred.
+          </p>
+        ) : operations.length === 0 ? (
           <p className="text-sm text-ink-400">No operations recorded yet.</p>
         ) : (
           <ul className="divide-y divide-ink-800">
@@ -372,16 +412,28 @@ export default function Overview() {
   );
 }
 
-function CountCard({ label, value, accent }: { label: string; value: number; accent?: string }) {
+function CountCard({
+  label,
+  value,
+  accent,
+  hint,
+}: {
+  label: string;
+  value: number | null;
+  accent?: string;
+  hint?: string;
+}) {
   return (
     <div className="rounded-lg border border-ink-700 bg-ink-850 p-4">
       <div className="text-xs uppercase tracking-wider text-ink-300">{label}</div>
       <div
         className={`mt-1 font-mono text-2xl font-semibold ${accent ?? "text-ink-100"}`}
         data-testid={`count-${label.toLowerCase()}`}
+        title={hint}
       >
-        {value}
+        {value === null ? "—" : value}
       </div>
+      {hint && value === null && <div className="mt-0.5 text-[11px] text-ink-400">{hint}</div>}
     </div>
   );
 }

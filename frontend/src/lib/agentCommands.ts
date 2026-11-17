@@ -4,6 +4,18 @@ export interface InstallCommands {
   foregroundTab: string;
 }
 
+/**
+ * The commands the enrollment wizard shows. They must match the reviewed
+ * artifacts that actually ship in this repository (deploy/examples), because
+ * an operator will paste them verbatim on a real host:
+ *
+ * - the agent CLI takes `--telemetry-only` (there is no `--agent-mode` flag);
+ * - bootstrap-enroll.sh.example reads NIMBUSOPS_* from its environment and
+ *   execs the agent loop, so it is a foreground enrollment, not a service
+ *   installer; the values cannot be "sourced" by `sudo` from an env file;
+ * - the reviewed unit examples are named nimbusops-agent-telemetry /
+ *   -executor; there is no generic `nimbusops-agent` unit.
+ */
 export function installCommands(
   origin: string,
   stateDir = "/var/lib/nimbusops-agent",
@@ -17,23 +29,33 @@ sudo -u nimbusops bash -c '
   unset t
 '`;
 
-  const systemdTab = `# 1. Configure agent environment:
-# /etc/nimbusops/agent.env
-NIMBUSOPS_INSTALL_DIR=/opt/nimbusops/agent
-NIMBUSOPS_SERVER_URL=${origin}
-NIMBUSOPS_TOKEN_FILE=${stateDir}/bootstrap.token
-NIMBUSOPS_STATE_FILE=${stateDir}/agent.json
-NIMBUSOPS_AGENT_MODE=${mode}
+  const envVars = [
+    `NIMBUSOPS_INSTALL_DIR=/opt/nimbusops`,
+    `NIMBUSOPS_SERVER_URL=${origin}`,
+    `NIMBUSOPS_TOKEN_FILE=${stateDir}/bootstrap.token`,
+    `NIMBUSOPS_STATE_FILE=${stateDir}/agent.json`,
+    `NIMBUSOPS_AGENT_MODE=${mode}`,
+  ].join(" \\\n  ");
 
-# 2. Complete bootstrap enrollment and start the service:
-sudo -u nimbusops bash /opt/nimbusops/deploy/examples/bootstrap-enroll.sh.example
-sudo systemctl enable --now nimbusops-agent`;
+  const systemdTab = `# 1. Enroll once, in the foreground, through the reviewed wrapper.
+# (It reads NIMBUSOPS_* from its environment — pass them explicitly; an env
+# file is NOT inherited by sudo.)
+sudo -u nimbusops env \\
+  ${envVars} \\
+  bash /opt/nimbusops/deploy/examples/bootstrap-enroll.sh.example
+
+# 2. Confirm the host appears here, then Ctrl-C the foreground agent.
+# 3. For a persistent service, install ONE reviewed unit example with your
+#    substitutions — deploy/examples/systemd/nimbusops-agent-${
+      mode === "executor" ? "executor" : "telemetry"
+    }.service.example — then:
+sudo systemctl daemon-reload
+sudo systemctl enable --now <name-of-the-unit-you-installed>`;
 
   const foregroundTab = `sudo -u nimbusops python -m nimbusops_agent \\
+  ${mode === "telemetry-only" ? "--telemetry-only \\\n  " : ""}--server-url ${origin} \\
   --bootstrap-token-file ${stateDir}/bootstrap.token \\
-  --server-url ${origin} \\
-  --state-file ${stateDir}/agent.json \\
-  --agent-mode ${mode}`;
+  --state-file ${stateDir}/agent.json`;
 
   return {
     promptToFile,

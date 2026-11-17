@@ -212,25 +212,38 @@ describe("Servers view (fleet + filters + awaiting rows)", () => {
 
   it("safe unregister dialog revokes host upon typed host id confirmation", async () => {
     let hostRevoked = false;
+    let revokeMethod = "";
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string, init?: RequestInit) => {
         const url = String(input);
-        if (url.endsWith("/hosts")) {
+        // The real contract is DELETE /api/v1/hosts/{id} (revoke-to-tombstone
+        // via api.revokeHost); anything else would not revoke anything.
+        if (url.endsWith("/hosts/h-123") && init?.method === "DELETE") {
+          revokeMethod = "DELETE";
+          hostRevoked = true;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              id: "h-123",
+              hostname: "box-to-remove",
+              enrollment_status: "REVOKED",
+              is_revoked: true,
+            }),
+          };
+        }
+        if (url.endsWith("/hosts") || url.includes("/hosts?")) {
           return {
             ok: true,
             status: 200,
             json: async () => ({
               hosts: hostRevoked
-                ? [{ id: "h-123", hostname: "box-to-remove", status: "REVOKED", is_revoked: true }]
-                : [{ id: "h-123", hostname: "box-to-remove", status: "ONLINE", is_revoked: false }],
+                ? [{ id: "h-123", hostname: "box-to-remove", status: "REVOKED", is_revoked: true, enrollment_status: "REVOKED" }]
+                : [{ id: "h-123", hostname: "box-to-remove", status: "ONLINE", is_revoked: false, enrollment_status: "ENROLLED" }],
               count: 1,
             }),
           };
-        }
-        if (url.includes("/hosts/h-123/revoke") && init?.method === "POST") {
-          hostRevoked = true;
-          return { ok: true, status: 200, json: async () => ({ status: "revoked" }) };
         }
         return { ok: true, status: 200, json: async () => ({ tokens: [], count: 0 }) };
       })
@@ -256,8 +269,10 @@ describe("Servers view (fleet + filters + awaiting rows)", () => {
 
     fireEvent.click(unregisterBtn);
 
+    // The dialog closes only after the revoke request actually succeeded.
     await waitFor(() => {
       expect(screen.queryByLabelText(/type .*host id.* to confirm/i)).not.toBeInTheDocument();
     });
+    expect(revokeMethod).toBe("DELETE");
   });
 });

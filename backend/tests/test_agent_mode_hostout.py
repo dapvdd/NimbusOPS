@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import inspect, text
 
 from backend.app.core.db import engine
+from backend.app.models import Host
 from backend.tests.conftest import auth_headers
 
 
@@ -83,6 +84,65 @@ def test_grace_window_serialized_only_while_active(client, online_host, db_sessi
     host.previous_token_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
     db.commit()
     assert client.get(f"/api/v1/hosts/{host_id}").json()["credential_grace_until"] is None
+
+
+def test_tombstone_serializes_revoked_consistently(client, db_session, online_host):
+    """REVOKED display truth: both revocation spellings serialize as REVOKED.
+
+    `revoke_host` sets is_revoked=True AND enrollment_status="REVOKED", but a
+    tombstone row could carry either spelling alone (legacy rows, manual DB
+    edits). The API must never leak a connectivity status for either: status
+    reads REVOKED, enrollment_status reads REVOKED, is_revoked reads True.
+    """
+    from backend.app.services.host_lifecycle import revoke_host
+
+    host_id, token = online_host
+    # Keep the heartbeat fresh so connectivity alone would say ONLINE.
+    assert client.post(
+        "/api/v1/agents/heartbeat",
+        headers=auth_headers(host_id, token),
+        json={},
+    ).status_code == 200
+
+    db_host = db_session.get(Host, host_id)
+    revoke_host(db_session, host_id, "admin")
+    assert db_host.is_revoked is True
+
+    detail = client.get(f"/api/v1/hosts/{host_id}").json()
+    assert detail["status"] == "REVOKED"
+    assert detail["connectivity"] == "ONLINE"  # fresh heartbeat is real
+    assert detail["is_revoked"] is True
+    assert detail["enrollment_status"] == "REVOKED"
+
+    listed = [h for h in client.get("/api/v1/hosts").json()["hosts"] if h["id"] == host_id]
+    assert listed and listed[0]["status"] == "REVOKED"
+    assert listed[0]["is_revoked"] is True
+    assert listed[0]["enrollment_status"] == "REVOKED"
+
+
+def test_tombstone_enrollment_status_only_still_reads_revoked(client, db_session, online_host):
+    """A row with enrollment_status="REVOKED" but is_revoked=False (legacy
+    spelling) must still serialize as fully revoked, never connectivity."""
+    host_id, token = online_host
+    assert client.post(
+        "/api/v1/agents/heartbeat",
+        headers=auth_headers(host_id, token),
+        json={},
+    ).status_code == 200
+
+    db_host = db_session.get(Host, host_id)
+    db_host.is_revoked = False
+    db_host.enrollment_status = "REVOKED"
+    db_session.commit()
+
+    detail = client.get(f"/api/v1/hosts/{host_id}").json()
+    assert detail["status"] == "REVOKED"
+    assert detail["is_revoked"] is True
+    assert detail["enrollment_status"] == "REVOKED"
+
+    listed = [h for h in client.get("/api/v1/hosts").json()["hosts"] if h["id"] == host_id]
+    assert listed and listed[0]["status"] == "REVOKED"
+    assert listed[0]["is_revoked"] is True
 
 
 def test_migration_adds_agent_mode_and_intent_columns():

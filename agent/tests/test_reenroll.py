@@ -73,7 +73,7 @@ def test_reenroll_success_writes_identity_and_verifies_heartbeat(tmp_path, monke
     assert len(backups) == 0
 
 
-def test_reenroll_rejects_legacy_enrollment_token(tmp_path, monkeypatch):
+def test_reenroll_missing_token_fails_without_touching_state(tmp_path, monkeypatch):
     state_file = tmp_path / "agent.json"
     orig_identity = Identity(host_id="orig-id", agent_token="orig-token")
     save_identity(state_file, orig_identity)
@@ -114,23 +114,64 @@ def test_reenroll_server_failure_restores_backup(tmp_path, monkeypatch):
     assert len(backups) == 1
 
 
-def test_reenroll_never_places_token_in_argv(monkeypatch, tmp_path):
+def test_reenroll_argv_carries_only_token_file_path(monkeypatch, tmp_path):
+    """RC2 F01: argv carries the token FILE PATH, never token material.
+
+    Behavioral form: after main() runs a full re-enroll driven by argv, the
+    only secret-ish argv element is the file path itself; the token stays
+    inside the file and the Sender receives it as a parameter, not a flag.
+    """
     token_file = tmp_path / "tok.txt"
-    token_file.write_text("super-secret-token", encoding="utf-8")
+    secret = "super-secret-token"
+    token_file.write_text(secret, encoding="utf-8")
     state_file = tmp_path / "agent.json"
     save_identity(state_file, Identity(host_id="id1", agent_token="tok1"))
 
-    monkeypatch.setattr("agent.nimbusops_agent.main.Sender", _FakeSender)
+    captured: dict = {}
 
-    # Call main with --reenroll and --bootstrap-token-file
-    test_argv = ["nimbusops-agent", "--reenroll", "--bootstrap-token-file", str(token_file), "--state-file", str(state_file)]
-    monkeypatch.setattr(sys, "argv", test_argv)
+    class _CapturingSender(_FakeSender):
+        def __init__(self, server_url, host_id, agent_token, *args, **kwargs):
+            super().__init__(server_url, host_id, agent_token)
+            captured["init_args"] = (host_id, agent_token)
 
-    for arg in sys.argv:
-        assert "super-secret-token" not in arg
+        def enroll(self, hostname, enrollment_token="", info=None, *, bootstrap_token=None):
+            captured["bootstrap_token"] = bootstrap_token
+            return super().enroll(hostname, enrollment_token, info, bootstrap_token=bootstrap_token)
 
-    code = main(test_argv[1:])
+    monkeypatch.setattr("agent.nimbusops_agent.main.Sender", _CapturingSender)
+
+    code = main(["--reenroll", "--bootstrap-token-file", str(token_file), "--state-file", str(state_file)])
     assert code == 0
+    # The token reached the enrollment call as a parameter...
+    assert captured["bootstrap_token"] == secret
+    # ...while argv (unchanged process arguments) never carried the material.
+    for arg in sys.argv:
+        assert secret not in arg
+    # The identity was replaced, proving the flow really ran.
+    assert load_identity(state_file).host_id == "test-host-id-42"
+
+
+def test_reenroll_heartbeat_verification_failure_restores_original(tmp_path, monkeypatch):
+    """A successful enroll followed by a failed verification heartbeat must
+    restore the original identity and exit 2 — the new credential is not
+    trusted until the server accepts a heartbeat with it."""
+    token_file = tmp_path / "tok.txt"
+    token_file.write_text("valid-bootstrap-token", encoding="utf-8")
+    state_file = tmp_path / "agent.json"
+    save_identity(state_file, Identity(host_id="orig-id", agent_token="orig-token"))
+
+    class _HeartbeatFailSender(_FakeSender):
+        _heartbeat_fail = True
+
+    monkeypatch.setattr("agent.nimbusops_agent.main.Sender", _HeartbeatFailSender)
+
+    code = main(["--reenroll", "--bootstrap-token-file", str(token_file), "--state-file", str(state_file)])
+    assert code == 2
+    # Original identity restored.
+    assert load_identity(state_file).host_id == "orig-id"
+    assert load_identity(state_file).agent_token == "orig-token"
+    # Backup retained for inspection.
+    assert len(list(tmp_path.glob("agent.json.pre-reenroll-*"))) == 1
 
 
 def test_reenroll_enters_loop_never(monkeypatch, tmp_path):
