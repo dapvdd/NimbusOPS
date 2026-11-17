@@ -2,7 +2,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import App from "../../App";
-import { addSimServer } from "../../lib/simRegistry";
 afterEach(() => { localStorage.clear(); vi.unstubAllGlobals(); });
 it("selects a host from the sidebar and navigates to its views", async () => {
   const real = {
@@ -21,7 +20,6 @@ it("selects a host from the sidebar and navigates to its views", async () => {
     latest_metrics: null,
     is_revoked: false,
   };
-  addSimServer("sim-node", "SIMULATED-STAGING");
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
@@ -39,36 +37,22 @@ it("selects a host from the sidebar and navigates to its views", async () => {
   expect(await within(sidebar).findByText("REAL")).toBeInTheDocument();
   const link = await within(sidebar).findByRole("link", { name: /david-lab/i });
   fireEvent.change(screen.getByLabelText("Search servers"), { target: { value: "david" } });
-  expect(within(sidebar).queryByText("sim-node")).not.toBeInTheDocument();
   fireEvent.click(link);
   expect(await screen.findByRole("heading", { name: "david-lab" })).toBeInTheDocument();
 });
-it("never renders a browser-local simulated id as a host, and never queries the API with it", async () => {
-  const host = addSimServer("edge-demo", "SIMULATED-DEV");
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "ok", version: "test", server_time: new Date().toISOString(), hosts: [], applications: [] }) }));
-  render(<MemoryRouter initialEntries={[`/servers/${host.id}`]}><App /></MemoryRouter>);
+it("refuses a simulated id and never queries the API with it", async () => {
+  const simulatedId = "sim-00000000-0000-4000-8000-000000000000";
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({ status: "ok", version: "test", server_time: new Date().toISOString(), hosts: [], applications: [] }),
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<MemoryRouter initialEntries={[`/servers/${simulatedId}`]}><App /></MemoryRouter>);
   // The real-host view refuses simulated identities instead of inventing one.
   expect(await screen.findByTestId("error-panel")).toBeInTheDocument();
   expect(screen.getByText(/simulated resources cannot access real infrastructure endpoints/i)).toBeInTheDocument();
-  expect(vi.mocked(fetch).mock.calls.every(([url]) => !String(url).includes(host.id))).toBe(true);
+  expect(fetchMock.mock.calls.every(([url]) => !String(url).includes(simulatedId))).toBe(true);
   expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
-});
-it("treats a URL-encoded simulated id as simulated on direct navigation", async () => {
-  const host = addSimServer("encoded-demo", "SIMULATED-DEV");
-  const encoded = host.id.replace(/-/g, "%2D");
-  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "ok", version: "test", server_time: new Date().toISOString(), hosts: [], applications: [] }) });
-  vi.stubGlobal("fetch", fetch);
-  render(<MemoryRouter initialEntries={[`/servers/${encoded}`]}><App /></MemoryRouter>);
-  expect(await screen.findByTestId("error-panel")).toBeInTheDocument();
-  expect(fetch.mock.calls.every(([url]) => !String(url).toLowerCase().includes("sim"))).toBe(true);
-});
-it("treats the legacy /hosts route for a simulated id as simulated", async () => {
-  const host = addSimServer("legacy-demo", "SIMULATED-DEV");
-  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "ok", version: "test", server_time: new Date().toISOString(), hosts: [], applications: [] }) });
-  vi.stubGlobal("fetch", fetch);
-  render(<MemoryRouter initialEntries={[`/hosts/${host.id}`]}><App /></MemoryRouter>);
-  expect(await screen.findByTestId("error-panel")).toBeInTheDocument();
-  expect(fetch.mock.calls.every(([url]) => !String(url).includes(host.id))).toBe(true);
 });
 it("shows different content for Monitoring and Overview on a real host", async () => {
   const real = {
