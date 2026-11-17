@@ -146,6 +146,104 @@ describe("Overview", () => {
   });
 });
 
+describe("Overview dashboard", () => {
+  const revoked = {
+    ...hostOnline,
+    id: "h-rev",
+    hostname: "revoked-vm",
+    status: "REVOKED",
+    is_revoked: true,
+    enrollment_status: "REVOKED",
+  };
+
+  function routeFetch(opts: {
+    hosts?: unknown[];
+    tokens?: unknown[];
+    operations?: unknown[];
+    health?: Record<string, unknown>;
+  }) {
+    return vi.fn(async (url: string) => {
+      const path = String(url);
+      if (path.includes("/operators/bootstrap-tokens")) {
+        return jsonResponse({ tokens: opts.tokens ?? [], count: (opts.tokens ?? []).length });
+      }
+      if (path.includes("/operations")) {
+        return jsonResponse({ operations: opts.operations ?? [], count: (opts.operations ?? []).length, total: 0, offset: 0 });
+      }
+      if (path.includes("/health")) {
+        return jsonResponse(opts.health ?? { status: "ok", service: "nimbusops", version: "1", build: "b", server_time: new Date().toISOString(), database: "ok" });
+      }
+      return jsonResponse({ hosts: opts.hosts ?? [], count: (opts.hosts ?? []).length });
+    });
+  }
+
+  it("puts a revoked host in Needs attention and never counts it as online", async () => {
+    vi.stubGlobal("fetch", routeFetch({ hosts: [hostOnline, revoked] }));
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("needs-attention")).toBeInTheDocument());
+    expect(screen.getByTestId("count-online")).toHaveTextContent("1");
+    expect(screen.getByTestId("count-revoked")).toHaveTextContent("1");
+    expect(screen.getByTestId("needs-attention")).toHaveTextContent(/revoked-vm/i);
+  });
+
+  it("links each attention entry to its resolving action", async () => {
+    vi.stubGlobal("fetch", routeFetch({ hosts: [revoked] }));
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("needs-attention")).toBeInTheDocument());
+    const link = screen.getByTestId("needs-attention").querySelector("a")!;
+    expect(link).toHaveAttribute("href", "/servers/h-rev");
+  });
+
+  it("renders real recent operations with status and error code", async () => {
+    vi.stubGlobal("fetch", routeFetch({
+      hosts: [hostOnline],
+      operations: [
+        { id: "op-1", deployment_id: "d-1", host_id: "h-1", op_type: "DEPLOY", status: "FAILED", created_at: "2026-11-16T10:00:00Z", updated_at: "2026-11-16T10:01:00Z", completed_at: null, result: null, error_code: "CONTAINER_FAILED", error_message: "boom" },
+      ],
+    }));
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("recent-operations")).toBeInTheDocument());
+    const ops = screen.getByTestId("recent-operations");
+    expect(ops).toHaveTextContent("DEPLOY");
+    expect(ops).toHaveTextContent("FAILED");
+    expect(ops).toHaveTextContent("CONTAINER_FAILED");
+    expect(ops.querySelector('a[href="/activity"]')).not.toBeNull();
+  });
+
+  it("shows no all-clear banner while something needs attention", async () => {
+    vi.stubGlobal("fetch", routeFetch({ hosts: [revoked] }));
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("needs-attention")).toBeInTheDocument());
+    expect(screen.queryByTestId("all-clear")).not.toBeInTheDocument();
+  });
+
+  it("shows the all-clear banner only when health is ok and nothing needs attention", async () => {
+    vi.stubGlobal("fetch", routeFetch({ hosts: [hostOnline] }));
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("all-clear")).toBeInTheDocument());
+  });
+
+  it("counts live awaiting-enrollment tokens and flags ones expiring soon", async () => {
+    const soon = new Date(Date.now() + 60_000).toISOString();
+    vi.stubGlobal("fetch", routeFetch({
+      hosts: [hostOnline],
+      tokens: [{ id: "bt-1", hostname: "pending-vm", created_at: new Date().toISOString(), expires_at: soon, consumed_at: null, consumed_by_host_id: null, revoked_at: null }],
+    }));
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("count-awaiting")).toHaveTextContent("1"));
+    expect(screen.getByTestId("needs-attention")).toHaveTextContent(/pending-vm/i);
+    expect(screen.getByTestId("needs-attention")).toHaveTextContent(/expir/i);
+  });
+
+  it("flags docker_enabled hosts whose agent reports telemetry-only mode", async () => {
+    const misconfigured = { ...hostOnline, docker_enabled: true, agent_mode: "telemetry-only" as const };
+    vi.stubGlobal("fetch", routeFetch({ hosts: [misconfigured] }));
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("needs-attention")).toBeInTheDocument());
+    expect(screen.getByTestId("needs-attention")).toHaveTextContent(/docker/i);
+  });
+});
+
 describe("HostDetail", () => {
   it("renders host identity and metrics from the API", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {

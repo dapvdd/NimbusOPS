@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import App from "../../App";
 import { addSimServer } from "../../lib/simRegistry";
 afterEach(() => { localStorage.clear(); vi.unstubAllGlobals(); });
@@ -29,13 +29,14 @@ it("selects a host from the sidebar and navigates to its views", async () => {
       let body: unknown = { status: "ok", version: "test", server_time: new Date().toISOString(), database: "ok" };
       if (path.endsWith("/hosts")) body = { hosts: [real], count: 1 };
       else if (path.includes("/metrics")) body = { host_id: real.id, points: [], count: 0 };
+      else if (path.includes("/events")) body = { events: [], count: 0 };
       else if (path.includes("/hosts/")) body = real;
       return { ok: true, json: async () => body };
     }),
   );
   render(<MemoryRouter initialEntries={["/"]}><App /></MemoryRouter>);
   const sidebar = await screen.findByRole("navigation", { name: "Primary" });
-  expect(within(sidebar).getByText("SIMULATED")).toBeInTheDocument();
+  expect(await within(sidebar).findByText("REAL")).toBeInTheDocument();
   const link = await within(sidebar).findByRole("link", { name: /david-lab/i });
   fireEvent.change(screen.getByLabelText("Search servers"), { target: { value: "david" } });
   expect(within(sidebar).queryByText("sim-node")).not.toBeInTheDocument();
@@ -93,6 +94,7 @@ it("shows different content for Monitoring and Overview on a real host", async (
       let body: unknown = { status: "ok", version: "test", server_time: new Date().toISOString(), database: "ok" };
       if (path.endsWith("/hosts")) body = { hosts: [real], count: 1 };
       else if (path.includes("/metrics")) body = { host_id: real.id, points: [], count: 0 };
+      else if (path.includes("/events")) body = { events: [], count: 0 };
       else if (path.includes("/hosts/")) body = real;
       return { ok: true, json: async () => body };
     }),
@@ -102,4 +104,47 @@ it("shows different content for Monitoring and Overview on a real host", async (
   expect(screen.queryByText("Enrolled at")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
   expect(await screen.findByText("Enrolled at")).toBeInTheDocument();
+});
+it("redirects the legacy /hosts/:hostId route to /servers/:hostId", async () => {
+  const legacy = {
+    id: "legacy-id",
+    hostname: "legacy-host",
+    status: "ONLINE",
+    agent_version: "0.1.0",
+    platform: "Linux",
+    platform_release: "6.8",
+    cpu_cores: 4,
+    total_memory_bytes: 8589934592,
+    boot_time: null,
+    enrolled_at: "2026-11-01T00:00:00Z",
+    last_seen_at: new Date().toISOString(),
+    last_telemetry_at: new Date().toISOString(),
+    latest_metrics: null,
+    is_revoked: false,
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const path = String(url);
+      if (path.includes("/operators/me")) {
+        return { ok: true, json: async () => ({ operator_id: "op-1", username: "admin", role: "ADMIN" }) };
+      }
+      if (path.includes("/operators/session/csrf")) return { ok: true, json: async () => ({ csrf_token: "csrf-1" }) };
+      if (path.endsWith("/hosts")) return { ok: true, json: async () => ({ hosts: [legacy], count: 1 }) };
+      if (path.includes("/events")) return { ok: true, json: async () => ({ events: [], count: 0 }) };
+      if (path.includes("/metrics")) return { ok: true, json: async () => ({ host_id: legacy.id, points: [], count: 0 }) };
+      return { ok: true, json: async () => legacy };
+    }),
+  );
+  function LocationProbe() {
+    const location = useLocation();
+    return <div data-testid="location">{location.pathname}</div>;
+  }
+  render(
+    <MemoryRouter initialEntries={["/hosts/legacy-id"]}>
+      <LocationProbe />
+      <App />
+    </MemoryRouter>,
+  );
+  await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/servers/legacy-id"));
 });
