@@ -1,0 +1,10 @@
+{
+  "release": "nimbusops-agent-1.0.0rc2-dualmode1-ubuntu24.04-amd64.tar.gz",
+  "source_commit": "b812976b14d74e8eff264a852b783d3bd2b9e0f3",
+  "sha256": "8f0a715761aff04920201409c95d648450329d68acb1e41a616c5e131637d7d9",
+  "target": "Ubuntu 24.04 amd64, CPython 3.12",
+  "builder": "deploy/build_agent_release.py",
+  "reproducibility": "Two independent builds byte-identical. Agent and installer inputs unchanged from demo1; identical digest is expected. New release identifier does not change internal agent protocol/version.",
+  "wheel_provenance": "Nine exact-version Linux wheels freshly obtained with pip download using documented runbook platform flags; each wheel byte-identical to baseline demo1 archive. requirements.lock contains every wheel SHA-256.",
+  "acceptance": "LOCAL NO-GO SNAPSHOT; no Ubuntu installation or live Katrina evidence"
+}

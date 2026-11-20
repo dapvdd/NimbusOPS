@@ -5,7 +5,7 @@ export interface InstallCommands {
 }
 
 /** Immutable demo release; update only together with rebuilt artifact and digest. */
-export const AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-demo1-ubuntu24.04-amd64.tar.gz";
+export const AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-dualmode1-ubuntu24.04-amd64.tar.gz";
 export const AGENT_SHA256 = "8f0a715761aff04920201409c95d648450329d68acb1e41a616c5e131637d7d9";
 
 export function verifiedInstallCommand(origin: string, hostname: string, reenroll = false): string {

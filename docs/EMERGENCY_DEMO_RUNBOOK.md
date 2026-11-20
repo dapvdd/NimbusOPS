@@ -15,7 +15,7 @@ executor install path remain separate and are not this demo's accepted path.
 
 ## Release
 
-Artifact: `frontend/public/releases/nimbusops-agent-1.0.0rc2-demo1-ubuntu24.04-amd64.tar.gz`.
+Artifact: `frontend/public/releases/nimbusops-agent-1.0.0rc2-dualmode1-ubuntu24.04-amd64.tar.gz`.
 The frontend production build copies this to `dist/releases/`; serving this exact
 path is a deployment gate, not an assumption that production already has it.
 
@@ -31,7 +31,7 @@ Rebuild from the checkout:
 
 ```powershell
 python -m pip download --dest deploy/releases/wheels --platform manylinux2014_x86_64 --python-version 312 --implementation cp --abi cp312 --only-binary=:all: httpx==0.28.1 psutil==6.1.1 anyio==4.8.0 certifi==2026.1.4 httpcore==1.0.9 idna==3.10 h11==0.16.0 sniffio==1.3.1 typing_extensions==4.12.2
-python deploy/build_agent_release.py --wheels deploy/releases/wheels --output deploy/releases/nimbusops-agent-1.0.0rc2-demo1-ubuntu24.04-amd64.tar.gz
+python deploy/build_agent_release.py --wheels deploy/releases/wheels --output deploy/releases/nimbusops-agent-1.0.0rc2-dualmode1-ubuntu24.04-amd64.tar.gz
 ```
 
 Compare the printed digest with the reviewed hash before copying it into

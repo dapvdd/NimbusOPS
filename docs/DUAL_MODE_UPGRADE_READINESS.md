@@ -1,14 +1,21 @@
 # Katrina dual-mode Add Server — upgrade readiness
 
-## Verdict: NO-GO for live upgrade (candidate in progress)
+## Verdict: NO-GO for live upgrade (local acceptance snapshot)
+
+Local acceptance resumed without infrastructure on 2026-11-20. See
+`DUAL_MODE_PARTIAL_ACCEPTANCE.md` for current results and commit resolution,
+`DUAL_MODE_REVIEW_FINDINGS.md` for three unresolved Important blockers, and
+`DUAL_MODE_DEPENDENCY_ASSESSMENT.md` for all eight advisory dispositions.
+Historical implementation evidence below is retained, not final sign-off.
 
 No deployment is authorized. No live Katrina, existing Azure VM or DavidLab
 production changes were performed during implementation. No push or merge.
 
-Candidate worktree: `dual-mode-onboarding`, baseline `8203d46`, uncommitted
-changes. UTC serialization fix carried forward from `c0255d4`, independently
+Candidate worktree: `dual-mode-onboarding`, baseline `8203d46`, local committed
+snapshot. UTC serialization fix carried forward from `c0255d4`, independently
 regression-tested. Do not deploy a moving/uncommitted tree: review and freeze a
-candidate revision and artifact hashes first.
+candidate revision and artifact hashes first. The local snapshot is frozen but
+not approved: recovery and ownership findings remain unresolved.
 
 ## Implementation and evidence
 
