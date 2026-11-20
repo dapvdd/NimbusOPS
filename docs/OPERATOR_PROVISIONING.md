@@ -46,8 +46,36 @@ outright when the variable is empty (recommended for production).
 - Rotate: `POST /api/v1/hosts/{id}/rotate-credential` — the old token keeps
   working during the grace window (`NIMBUSOPS_CREDENTIAL_ROTATION_GRACE_SECONDS`,
   default 300 s) so the agent can be restarted without downtime.
-- Revoke: `POST /api/v1/hosts/{id}/revoke` — heartbeat/telemetry/poll all
+- Revoke: `DELETE /api/v1/hosts/{id}` — heartbeat/telemetry/poll all
   reject with `HOST_REVOKED`.
+
+### Agent One-Shot Operations
+
+#### Re-enroll (`--reenroll`)
+To re-enroll a revoked or restored host with an operator-issued bootstrap token:
+1. Write the bootstrap token to a secure file (0600 on POSIX).
+2. Run:
+   ```bash
+   python -m nimbusops_agent --reenroll --bootstrap-token-file /path/to/token --state-file /path/to/agent.json
+   ```
+Exit codes:
+- `0`: Verified successful re-enrollment and verified heartbeat.
+- `2`: Precondition failure or server rejection. Identity is restored from backup.
+
+#### Apply Credential File (`--apply-credential-file`)
+To apply a rotated credential file without service downtime:
+1. Provide a 0600 JSON file containing `{"agent_token": "..."}`.
+2. Run:
+   ```bash
+   python -m nimbusops_agent --apply-credential-file /path/to/candidate.json --state-file /path/to/agent.json
+   ```
+Exit codes:
+- `0`: Heartbeat verified with candidate credential; identity replaced; candidate and backup files removed.
+- `1`: Transient network failure; original identity and candidate preserved for retry.
+- `2`: Precondition failure (invalid candidate JSON, missing identity, etc.).
+- `3`: Unauthorized (401/403); original identity and candidate preserved.
+
+Note: Credentials and bootstrap tokens are read strictly from prompt-to-file or environment, never passed as command-line arguments (argv).
 
 ## 5. Enabling Docker (per host, default OFF)
 

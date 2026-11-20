@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "protocol": "nimbusops-manager-wire-v1",
+  "description": "Golden request/response fixtures for manager protocol v1 (design 2026-11-17-sprint5-full-design.md section 15.4). Placeholder hashes only; no secret material.",
+  "fixtures": [
+    {
+      "message": "STATUS",
+      "request": {
+        "protocol_version": 1,
+        "job_id": "00000000-0000-4000-8000-000000000001",
+        "dispatch_id": "00000000-0000-4000-8000-000000000101",
+        "intent_hash": "0000000000000000000000000000000000000000000000000000000000000001",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "ownership_generation": 1,
+        "expected_credential_version": 1,
+        "expected_revocation_revision": 0,
+        "request_id": "00000000-0000-4000-8000-000000000201",
+        "journal_sequence": 1
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000201",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "journal_sequence": 1,
+        "journal_state": "OPEN",
+        "os_lock_held": false,
+        "supervisor_state": "ABSENT",
+        "receipt_hash": "0000000000000000000000000000000000000000000000000000000000000003"
+      }
+    },
+    {
+      "message": "ADMIT",
+      "request": {
+        "protocol_version": 1,
+        "job_id": "00000000-0000-4000-8000-000000000001",
+        "dispatch_id": "00000000-0000-4000-8000-000000000101",
+        "intent_hash": "0000000000000000000000000000000000000000000000000000000000000001",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "ownership_generation": 1,
+        "expected_credential_version": 1,
+        "expected_revocation_revision": 0,
+        "request_id": "00000000-0000-4000-8000-000000000202",
+        "journal_sequence": 2
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000202",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "journal_sequence": 2,
+        "journal_state": "ADMITTED",
+        "admission_receipt_hash": "0000000000000000000000000000000000000000000000000000000000000004",
+        "admission_receipt_ttl_seconds": 300
+      }
+    },
+    {
+      "message": "START_ACTION",
+      "request": {
+        "protocol_version": 1,
+        "job_id": "00000000-0000-4000-8000-000000000001",
+        "dispatch_id": "00000000-0000-4000-8000-000000000101",
+        "intent_hash": "0000000000000000000000000000000000000000000000000000000000000001",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "ownership_generation": 1,
+        "expected_credential_version": 1,
+        "expected_revocation_revision": 0,
+        "request_id": "00000000-0000-4000-8000-000000000203",
+        "journal_sequence": 3
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000203",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "journal_sequence": 3,
+        "journal_state": "STARTED",
+        "action_started": true,
+        "receipt_hash": "0000000000000000000000000000000000000000000000000000000000000005"
+      }
+    },
+    {
+      "message": "CONFIRM_ACTIVATION",
+      "request": {
+        "protocol_version": 1,
+        "job_id": "00000000-0000-4000-8000-000000000001",
+        "dispatch_id": "00000000-0000-4000-8000-000000000101",
+        "intent_hash": "0000000000000000000000000000000000000000000000000000000000000001",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "ownership_generation": 1,
+        "expected_credential_version": 1,
+        "expected_revocation_revision": 0,
+        "request_id": "00000000-0000-4000-8000-000000000204",
+        "journal_sequence": 4
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000204",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "journal_sequence": 4,
+        "journal_state": "ACTIVATED",
+        "activation_epoch": 1,
+        "receipt_hash": "0000000000000000000000000000000000000000000000000000000000000006"
+      }
+    },
+    {
+      "message": "ARM_CHALLENGE",
+      "request": {
+        "protocol_version": 1,
+        "job_id": "00000000-0000-4000-8000-000000000001",
+        "dispatch_id": "00000000-0000-4000-8000-000000000101",
+        "intent_hash": "0000000000000000000000000000000000000000000000000000000000000001",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "ownership_generation": 1,
+        "expected_credential_version": 1,
+        "expected_revocation_revision": 0,
+        "request_id": "00000000-0000-4000-8000-000000000205",
+        "journal_sequence": 5
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000205",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "journal_sequence": 5,
+        "journal_state": "ARMED",
+        "activation_epoch": 1,
+        "receipt_hash": "0000000000000000000000000000000000000000000000000000000000000007"
+      }
+    },
+    {
+      "message": "CANCEL",
+      "request": {
+        "protocol_version": 1,
+        "job_id": "00000000-0000-4000-8000-000000000001",
+        "dispatch_id": "00000000-0000-4000-8000-000000000101",
+        "intent_hash": "0000000000000000000000000000000000000000000000000000000000000001",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "ownership_generation": 1,
+        "expected_credential_version": 1,
+        "expected_revocation_revision": 0,
+        "request_id": "00000000-0000-4000-8000-000000000206",
+        "journal_sequence": 6
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000206",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "journal_sequence": 6,
+        "journal_state": "CANCELLED",
+        "os_lock_evidence_hash": "0000000000000000000000000000000000000000000000000000000000000008",
+        "process_evidence_hash": "0000000000000000000000000000000000000000000000000000000000000009"
+      }
+    },
+    {
+      "message": "CLOSE_RESULT",
+      "request": {
+        "protocol_version": 1,
+        "job_id": "00000000-0000-4000-8000-000000000001",
+        "dispatch_id": "00000000-0000-4000-8000-000000000101",
+        "intent_hash": "0000000000000000000000000000000000000000000000000000000000000001",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "ownership_generation": 1,
+        "expected_credential_version": 1,
+        "expected_revocation_revision": 0,
+        "request_id": "00000000-0000-4000-8000-000000000207",
+        "journal_sequence": 7
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "00000000-0000-4000-8000-000000000207",
+        "machine_binding": "0000000000000000000000000000000000000000000000000000000000000002",
+        "journal_sequence": 7,
+        "journal_state": "CLOSED",
+        "terminal_status": "COMPLETED",
+        "receipt_hash": "000000000000000000000000000000000000000000000000000000000000000a"
+      }
+    }
+  ]
+}

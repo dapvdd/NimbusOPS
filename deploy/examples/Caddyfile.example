@@ -1,0 +1,18 @@
+# INERT EXAMPLE — substitute every @TOKEN@ before use.
+# TLS is required for anything beyond loopback. This example keeps Caddy's
+# automatic HTTPS off only because the listener may be a private tailnet/IP.
+{
+    admin off
+    auto_https @AUTO_HTTPS@
+}
+@SCHEME@://@PUBLIC_HOST@:@PUBLIC_PORT@ {
+    bind @PUBLIC_BIND_ADDRESS@
+    handle /api/* {
+        reverse_proxy @API_UPSTREAM@
+    }
+    handle {
+        root * @FRONTEND_DIST@
+        try_files {path} /index.html
+        file_server
+    }
+}

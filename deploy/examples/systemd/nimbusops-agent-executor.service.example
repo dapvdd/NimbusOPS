@@ -1,0 +1,34 @@
+# INERT EXAMPLE — substitute every @TOKEN@ before installing.
+# Executor agent: Docker operations are enabled for THIS host only after the
+# owner approves them in the console. Use it only on disposable, authorized
+# machines. The service account needs exactly the Docker access the operator
+# granted; never add sudo or a general-purpose shell.
+[Unit]
+Description=NimbusOps executor agent
+After=network-online.target docker.service
+Wants=network-online.target
+StartLimitBurst=3
+StartLimitIntervalSec=300
+
+[Service]
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+SupplementaryGroups=@DOCKER_GROUP@
+WorkingDirectory=@INSTALL_DIR@/agent
+ExecStart=@VENV_DIR@/bin/python -m nimbusops_agent --server-url @CONTROL_PLANE_URL@ --state-file @STATE_DIR@/agent.json
+StateDirectory=@STATE_DIR_NAME@
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+Restart=on-failure
+RestartPreventExitStatus=2 3
+
+[Install]
+WantedBy=multi-user.target

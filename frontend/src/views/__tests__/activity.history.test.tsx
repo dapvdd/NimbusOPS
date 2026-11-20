@@ -19,6 +19,8 @@ const historyPayload = {
       result: null, error_code: null, error_message: null },
   ],
   count: 3,
+  total: 3,
+  offset: 0,
 };
 
 beforeEach(() => {
@@ -37,14 +39,28 @@ it("renders real operation history from the API", async () => {
 });
 
 it("filters by status", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => historyPayload }));
+  // RC2 F10: filtering happens on the server, so the mock must answer the
+  // status query with only matching rows (as the API does).
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((url: RequestInfo | URL) => {
+      const target = String(url);
+      const filtered = target.includes("status=FAILED")
+        ? historyPayload.operations.filter((o) => o.status === "FAILED")
+        : historyPayload.operations;
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ ...historyPayload, operations: filtered, count: filtered.length }),
+      });
+    }),
+  );
   render(<MemoryRouter><Activity /></MemoryRouter>);
   await screen.findByText("op-1");
   fireEvent.click(screen.getByRole("button", { name: "FAILED" }));
+  await screen.findByText("op-2");
   expect(screen.queryByText("op-1")).not.toBeInTheDocument();
-  expect(screen.getByText("op-2")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "ALL" }));
-  expect(screen.getByText("op-1")).toBeInTheDocument();
+  expect(await screen.findByText("op-1")).toBeInTheDocument();
 });
 
 it("shows empty state when no operations exist", async () => {

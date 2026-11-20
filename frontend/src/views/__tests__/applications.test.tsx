@@ -9,6 +9,9 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Applications from "../Applications";
 
+const authState = vi.hoisted(() => ({ admin: true }));
+vi.mock("../../auth/Session", () => ({ useAdmin: () => authState.admin }));
+
 function jsonResponse(body: unknown, status = 200) {
   return {
     ok: status >= 200 && status < 300,
@@ -81,6 +84,7 @@ const stoppedApp = {
 };
 
 beforeEach(() => {
+  authState.admin = true;
   vi.spyOn(window, "setInterval").mockReturnValue(1 as unknown as number);
 });
 
@@ -133,6 +137,21 @@ describe("Applications — rendering", () => {
 });
 
 describe("Applications — deploy interaction", () => {
+  it("does not invent container running when successful result has no state", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/applications/deploy")) return Promise.resolve(jsonResponse({ operation_id: "op-no-state" }));
+      if (url.includes("/operations/op-no-state")) return Promise.resolve(jsonResponse({ id: "op-no-state", op_type: "DEPLOY", status: "SUCCEEDED", result: null }));
+      if (url.includes("/templates")) return Promise.resolve(jsonResponse(templates));
+      if (url.includes("/applications")) return Promise.resolve(jsonResponse({ applications: [], count: 0 }));
+      if (url.includes("/hosts")) return Promise.resolve(jsonResponse(hosts));
+      return Promise.resolve(jsonResponse({}, 404));
+    }));
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: /^deploy$/i }));
+    const result = await screen.findByTestId("op-success");
+    expect(result).toHaveTextContent("Succeeded");
+    expect(result).not.toHaveTextContent("container running");
+  });
   it("deploy click POSTs and shows queued/running progress then success", async () => {
     const deployBody = {
       operation_id: "op-new",
@@ -332,5 +351,52 @@ describe("Applications — lifecycle controls", () => {
     await waitFor(() => expect(startBtn).not.toBeDisabled());
     expect(screen.getByRole("button", { name: /^stop$/i })).toBeDisabled();
     expect(screen.getByText(/stopped/i)).toBeInTheDocument();
+  });
+});
+
+describe("Applications — role and lifecycle status consumers", () => {
+  it("VIEWER has no deploy, start, or stop control in the DOM", async () => {
+    authState.admin = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/templates")) return Promise.resolve(jsonResponse(templates));
+        if (url.includes("/applications")) return Promise.resolve(jsonResponse({ applications: [runningApp], count: 1 }));
+        if (url.includes("/hosts")) return Promise.resolve(jsonResponse(hosts));
+        return Promise.resolve(jsonResponse({}, 404));
+      }),
+    );
+    renderView();
+
+    await screen.findByText(runningApp.container_name);
+    expect(screen.queryByText(/deploy new application/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^deploy$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^start$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^stop$/i })).not.toBeInTheDocument();
+    // Read-only affordances remain.
+    expect(screen.getByRole("button", { name: /refresh state/i })).toBeInTheDocument();
+  });
+
+  it("a revoked host says re-enroll is required instead of promising a later run", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/templates")) return Promise.resolve(jsonResponse(templates));
+        if (url.includes("/applications")) return Promise.resolve(jsonResponse(noApps));
+        if (url.includes("/hosts")) {
+          return Promise.resolve(jsonResponse({ hosts: [{ id: "h-rev", hostname: "revoked-vm", status: "REVOKED" }], count: 1 }));
+        }
+        return Promise.resolve(jsonResponse({}, 404));
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <Applications selectedHostId="h-rev" />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(/re-enroll required/i)).toBeInTheDocument();
+    expect(screen.queryByText(/will run when the agent reconnects/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^deploy$/i })).toBeDisabled();
   });
 });

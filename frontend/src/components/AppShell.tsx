@@ -4,17 +4,21 @@ import { api } from "../api/client";
 import type { HealthResponse } from "../api/types";
 import { formatUtcTime } from "../lib/format";
 import { Sidebar } from "./Sidebar";
+import { useSession } from '../auth/Session';
 
 /**
  * Top bar with brand, health indicator, and primary navigation. Health is
  * polled so "API unavailable" is honest and immediate, not assumed.
  */
 
-type ConnState = "checking" | "ok" | "down";
+type ConnState = "checking" | "ok" | "degraded" | "down";
 
 function HealthDot({ state }: { state: ConnState }) {
   if (state === "ok") {
     return <span className="inline-block h-2 w-2 rounded-full bg-signal-ok" aria-label="API online" />;
+  }
+  if (state === "degraded") {
+    return <span className="inline-block h-2 w-2 rounded-full bg-signal-warn" aria-label="API degraded" />;
   }
   if (state === "down") {
     return <span className="inline-block h-2 w-2 rounded-full bg-signal-bad" aria-label="API unreachable" />;
@@ -23,6 +27,8 @@ function HealthDot({ state }: { state: ConnState }) {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const session = useSession();
+  const [logoutError,setLogoutError] = useState('');
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [conn, setConn] = useState<ConnState>("checking");
 
@@ -33,7 +39,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         const h = await api.health();
         if (!alive) return;
         setHealth(h);
-        setConn("ok");
+        // RC2 F12: "reachable" is not "healthy". A degraded dependency keeps
+        // the shell honest instead of showing a green dot.
+        setConn(h.status === "ok" ? "ok" : "degraded");
       } catch {
         if (!alive) return;
         setHealth(null);
@@ -60,7 +68,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
             <span className="font-semibold tracking-tight text-ink-100">NimbusOps</span>
             <span className="hidden sm:inline text-[11px] uppercase tracking-widest text-ink-400 border border-ink-600 rounded px-1.5 py-0.5">
-              Phase 3A
+              RC2
             </span>
           </NavLink>
           <nav className="hidden">
@@ -87,10 +95,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-4 text-xs text-ink-300">
+            {session?.user && <><span>{session.user.username} · {session.user.role}</span><button onClick={() => { void session.logout().catch(()=>setLogoutError('Logout failed. Please retry.')); }}>Log out</button>{logoutError && <span role="alert">{logoutError}</span>}</>}
             {conn === "ok" && health ? (
               <span className="flex items-center gap-2">
                 <HealthDot state={conn} />
-                <span className="hidden sm:inline">API v{health.version}</span>
+                <span className="hidden sm:inline" title={`build ${health.build}`}>
+                  v{health.version} · {health.build}
+                </span>
+              </span>
+            ) : conn === "degraded" && health ? (
+              <span className="flex items-center gap-2 text-signal-warn">
+                <HealthDot state={conn} />
+                <span>
+                  API degraded
+                  {health.database !== "ok" ? " (database)" : ""}
+                </span>
               </span>
             ) : (
               <span className="flex items-center gap-2 text-signal-bad">
@@ -98,7 +117,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <span>{conn === "down" ? "API unavailable" : "Checking API…"}</span>
               </span>
             )}
-            {conn === "ok" && health && (
+            {health && (
               <span className="hidden md:inline font-mono text-[11px] text-ink-400" title="Server time (UTC)">
                 {formatUtcTime(health.server_time)}
               </span>

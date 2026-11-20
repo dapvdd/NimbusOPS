@@ -7,7 +7,7 @@ Run locally (from backend/):
 from contextlib import asynccontextmanager
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api import agents, applications, bootstrap_tokens, host_lifecycle, operators, public
@@ -29,6 +29,11 @@ async def lifespan(_: FastAPI):
     from .core.migrations import upgrade_phase3b
 
     upgrade_phase3b()
+    # Sprint 5: additive zero-touch provisioning schema. Must run AFTER phase3b
+    # so revocation_revision column is present when host-row migrations run.
+    from .core.migrations import run_sprint5_migrations
+
+    run_sprint5_migrations()
     # Seed the approved deployment-template catalog (idempotent).
     from .services.deployments import seed_templates
 
@@ -86,6 +91,7 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def _security_headers(request, call_next):
         response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -95,9 +101,9 @@ def create_app() -> FastAPI:
         return response
 
     install_error_handlers(app)
-    app.include_router(public.router)
+    app.include_router(public.router, dependencies=[Depends(operators.require_read)])
     app.include_router(agents.router)
-    app.include_router(applications.router)
+    app.include_router(applications.router, dependencies=[Depends(operators.require_read)])
     app.include_router(operators.router)
     app.include_router(bootstrap_tokens.router)
     app.include_router(host_lifecycle.router)

@@ -1,6 +1,6 @@
 """Pydantic schemas: agent (request) and public (response) contracts."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -36,6 +36,9 @@ class HeartbeatRequest(BaseModel):
     cpu_cores: int | None = Field(default=None, ge=1, le=4096)
     total_memory_bytes: int | None = Field(default=None, ge=0)
     boot_time: datetime | None = None
+    # Sprint D3: mode the running agent reports. Absence (None) is meaningful —
+    # it clears any previously reported mode ("not reported" now).
+    agent_mode: Literal["executor", "telemetry-only"] | None = None
     # Phase 5 (FR-03): optional docker inventory snapshot (replace-on-report).
     inventory: "InventoryPayload | None" = None
 
@@ -114,6 +117,14 @@ class LatestMetrics(BaseModel):
     disk_total_bytes: int
     disk_used_percent: float
 
+    @field_validator("recorded_at")
+    @classmethod
+    def normalize_recorded_at(cls, value: datetime) -> datetime:
+        """Restore the UTC timezone SQLite drops on persisted telemetry."""
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
 
 MetricsPoint = LatestMetrics  # Same shape on history endpoints.
 
@@ -121,7 +132,11 @@ MetricsPoint = LatestMetrics  # Same shape on history endpoints.
 class HostOut(BaseModel):
     id: str
     hostname: str
-    status: Literal["ONLINE", "STALE", "OFFLINE"]
+    # Sprint D1: effective display status — REVOKED beats connectivity.
+    status: Literal["ONLINE", "STALE", "OFFLINE", "REVOKED"]
+    # Sprint D1: pure heartbeat connectivity, kept for clients that must not
+    # see revocation folded into their connectivity logic.
+    connectivity: Literal["ONLINE", "STALE", "OFFLINE"]
     agent_version: str | None
     platform: str | None
     platform_release: str | None
@@ -138,6 +153,43 @@ class HostOut(BaseModel):
     docker_enabled: bool
     # Phase 4 (FR-19): environment grouping metadata.
     environment: Literal["PRIVATE", "PUBLIC-CLOUD"]
+    # Sprint D3: mode the running agent reported (null = not reported).
+    agent_mode: Literal["executor", "telemetry-only"] | None
+    # Sprint D1: rotation bookkeeping for the UI countdown.
+    credential_version: int
+    # Null unless a rotation grace window is ACTIVE (hash set AND expires_at > now).
+    credential_grace_until: datetime | None
+
+    @field_validator(
+        "boot_time",
+        "enrolled_at",
+        "last_seen_at",
+        "last_telemetry_at",
+        "credential_grace_until",
+    )
+    @classmethod
+    def normalize_host_timestamp(cls, value: datetime | None) -> datetime | None:
+        """Expose persisted UTC instants unambiguously to browser clients."""
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+
+class HostEventOut(BaseModel):
+    id: int
+    host_id: str | None
+    event: str
+    actor: str
+    detail: str | None
+    at: datetime
+    created_at: datetime
+
+
+class HostEventListResponse(BaseModel):
+    events: list[HostEventOut]
+    count: int
 
 
 class PaginationMeta(BaseModel):
@@ -161,11 +213,21 @@ class HostMetricsResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: Literal["ok"]
+    # RC2 F12: a dependency failure must be visible in the payload, not hidden
+    # behind a static "ok".
+    status: Literal["ok", "degraded"]
     service: Literal["nimbusops-control-server"]
-    version: Literal["0.1.0"]
+    version: str
+    # RC2 F15: immutable build marker (NIMBUSOPS_BUILD_SHA), "unknown" if absent.
+    build: str
     server_time: datetime
     database: Literal["ok", "degraded"]
+
+
+class ReadinessResponse(BaseModel):
+    ready: bool
+    database: Literal["ok", "degraded"]
+    version: str
 
 
 # ------------------------------------------------------------------ Phase 2
@@ -207,6 +269,10 @@ class OperationOut(BaseModel):
 class OperationListResponse(BaseModel):
     operations: list[OperationOut]
     count: int
+    # RC2 F10: total matching rows and the window offset, so clients can page
+    # toward older history instead of silently losing recent operations.
+    total: int
+    offset: int = 0
 
 
 class OperationEventOut(BaseModel):
@@ -270,6 +336,8 @@ class CommandPollResponse(BaseModel):
 class AgentCommand(OperationOut):
     """Command delivered to an agent: operation plus execution payload."""
     template: dict | None = None  # image/ports/name for DEPLOY ops
+    # RC2 F07: fencing generation for this claim; echoed back with the result.
+    claim_generation: int = 0
 
 
 class CommandResultRequest(BaseModel):
@@ -277,11 +345,16 @@ class CommandResultRequest(BaseModel):
     result: dict | None = None
     error_code: str | None = Field(default=None, max_length=64)
     error_message: str | None = Field(default=None, max_length=512)
+    # Optional for backward compatibility; enforced when present.
+    claim_generation: int | None = Field(default=None, ge=0)
 
 
 class CommandResultResponse(BaseModel):
     operation_id: str
-    status: Literal["SUCCEEDED", "FAILED", "UNKNOWN"]
+    # A rejected (accepted=False) result can leave the operation non-terminal
+    # (stale fencing) or already terminal (duplicate delivery), so the honest
+    # current state is echoed rather than only terminal states.
+    status: Literal["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"]
     accepted: bool
 
 
@@ -297,6 +370,7 @@ class LoginResponse(BaseModel):
     session_token: str
     operator_id: str
     role: Literal["ADMIN", "VIEWER"]
+
     expires_at: datetime
 
 
@@ -304,4 +378,3 @@ class MeResponse(BaseModel):
     operator_id: str
     username: str
     role: Literal["ADMIN", "VIEWER"]
-

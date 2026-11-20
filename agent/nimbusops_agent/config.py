@@ -11,8 +11,11 @@ import json
 import os
 import pathlib
 import platform
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import psutil
 
@@ -32,22 +35,54 @@ class ConfigError(ValueError):
 class Config:
     server_url: str
     enrollment_token: str
+    # RC2 F01: explicit secure enrollment mode. Exactly one credential may be
+    # supplied for a host with no stored identity. The bootstrap token is
+    # normally supplied via env/file, never as a command-line argument.
+    bootstrap_token: str = ""
     interval: float = DEFAULT_INTERVAL
     state_file: pathlib.Path = field(
         default_factory=lambda: pathlib.Path.home() / ".nimbusops" / "agent.json"
     )
     once: bool = False
+    telemetry_only: bool = False
+    # S4-3: operator-set classification hint. None by default (field omitted
+    # from the enroll payload); validated against the server-side literal.
+    environment: str | None = None
+    hostname: str | None = None
 
     def __post_init__(self) -> None:
         if not self.server_url:
             raise ConfigError("server_url is required")
         if not self.server_url.startswith(("http://", "https://")):
             raise ConfigError(f"server_url must be http(s): {self.server_url!r}")
-        if not self.enrollment_token:
-            raise ConfigError("enrollment_token is required (never hardcode a default)")
+        if self.enrollment_token and self.bootstrap_token:
+            raise ConfigError(
+                "provide exactly one of enrollment_token or bootstrap_token"
+            )
+        if self.environment is not None and self.environment not in ("PRIVATE", "PUBLIC-CLOUD"):
+            raise ConfigError(
+                f"environment must be PRIVATE or PUBLIC-CLOUD: {self.environment!r}"
+            )
+        # Enrollment credentials are only needed for *fresh* enrollment. A
+        # re-running agent with a persisted identity must start without one.
+        if not (self.enrollment_token or self.bootstrap_token):
+            if not load_identity(pathlib.Path(self.state_file)):
+                raise ConfigError(
+                    "enrollment_token or bootstrap_token is required when no stored identity exists "
+                    "(never hardcode a default)"
+                )
         if not (MIN_INTERVAL <= self.interval <= MAX_INTERVAL):
             raise ConfigError(f"interval must be within [{MIN_INTERVAL}, {MAX_INTERVAL}] s")
         self.state_file = pathlib.Path(self.state_file)
+
+    @property
+    def enrollment_mode(self) -> str:
+        """Explicit mode: 'bootstrap', 'legacy', or 'identity' (stored)."""
+        if self.bootstrap_token:
+            return "bootstrap"
+        if self.enrollment_token:
+            return "legacy"
+        return "identity"
 
 
 @dataclass
@@ -66,13 +101,72 @@ class Identity:
         return cls(host_id=data["host_id"], agent_token=data["agent_token"])
 
 
-def save_identity(path: pathlib.Path, identity: Identity) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(identity.to_json(), encoding="utf-8")
+def _restrict_permissions(path: pathlib.Path) -> None:
+    """Best-effort owner-only access for the identity file.
+
+    POSIX: mode 0600. Windows: remove inherited ACEs and grant the current
+    user only (explicit ACL handling; os.chmod does not express this).
+    Failures are swallowed: identity usability must not depend on ACL tooling,
+    and the caller has already restricted the temp file before writing.
+    """
+    if os.name == "nt":
+        user = os.environ.get("USERNAME")
+        if not user:
+            return
+        try:
+            subprocess.run(
+                ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+                shell=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return
     try:
         os.chmod(path, 0o600)
     except OSError:
-        pass  # Best-effort on Windows (POSIX perms not applicable).
+        pass
+
+
+def save_identity(path: pathlib.Path, identity: Identity) -> None:
+    """Atomically persist identity with owner-only permissions.
+
+    RC2 F14: the bytes are written to a uniquely named temp file in the same
+    directory (created 0600 on POSIX before any write), fsync'd, then replaced
+    over the target. A crash or write failure therefore leaves either the old
+    valid identity or the new one — never a truncated file. On Windows the ACL
+    is restricted explicitly after the replace.
+    """
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = identity.to_json().encode("utf-8")
+
+    fd, tmp_name = tempfile.mkstemp(prefix=".agent-", suffix=".tmp", dir=str(path.parent))
+    tmp = pathlib.Path(tmp_name)
+    try:
+        # Restrict before writing any credential bytes.
+        try:
+            os.fchmod(fd, 0o600)
+        except (AttributeError, OSError, NotImplementedError):
+            pass
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        _restrict_permissions(path)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def load_identity(path: pathlib.Path) -> Identity | None:
@@ -85,6 +179,70 @@ def load_identity(path: pathlib.Path) -> Identity | None:
         return None
 
 
+def backup_identity(state_path: pathlib.Path, prefix: str = "agent.json.pre-reenroll-") -> pathlib.Path | None:
+    """Create a 0600 backup of state_path if it exists."""
+    state_path = pathlib.Path(state_path)
+    if not state_path.is_file():
+        return None
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    backup_path = state_path.parent / f"{prefix}{ts}"
+    data = state_path.read_bytes()
+    fd, tmp_name = tempfile.mkstemp(prefix=".bak-", suffix=".tmp", dir=str(state_path.parent))
+    tmp = pathlib.Path(tmp_name)
+    try:
+        try:
+            os.fchmod(fd, 0o600)
+        except (AttributeError, OSError, NotImplementedError):
+            pass
+        with os.fdopen(fd, "wb") as h:
+            h.write(data)
+            h.flush()
+            os.fsync(h.fileno())
+        os.replace(tmp, backup_path)
+        _restrict_permissions(backup_path)
+        return backup_path
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def restore_backup(state_path: pathlib.Path, backup_path: pathlib.Path) -> None:
+    """Restore state_path from backup_path (copies to target so backup remains)."""
+    if backup_path.is_file():
+        state_path = pathlib.Path(state_path)
+        data = backup_path.read_bytes()
+        fd, tmp_name = tempfile.mkstemp(prefix=".rst-", suffix=".tmp", dir=str(state_path.parent))
+        tmp = pathlib.Path(tmp_name)
+        try:
+            try:
+                os.fchmod(fd, 0o600)
+            except (AttributeError, OSError, NotImplementedError):
+                pass
+            with os.fdopen(fd, "wb") as h:
+                h.write(data)
+                h.flush()
+                os.fsync(h.fileno())
+            os.replace(tmp, state_path)
+            _restrict_permissions(state_path)
+        except BaseException:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
+
+
 def delete_identity(path: pathlib.Path) -> None:
     try:
         path.unlink()
@@ -92,10 +250,15 @@ def delete_identity(path: pathlib.Path) -> None:
         pass
 
 
-def collect_host_info() -> dict:
-    """Genuine host metadata from psutil/platform (no fabrication)."""
+def collect_host_info(cfg: Config | None = None) -> dict:
+    """Genuine host metadata from psutil/platform (no fabrication).
+
+    S4-3: when the operator set NIMBUSOPS_AGENT_ENVIRONMENT (Config.environment),
+    the value rides along in the enroll payload — explicit operator input, never
+    an auto-detected trust decision.
+    """
     vm = psutil.virtual_memory()
-    return {
+    info: dict = {
         "agent_version": __version__,
         "platform": platform.system(),
         "platform_release": platform.release(),
@@ -103,3 +266,6 @@ def collect_host_info() -> dict:
         "total_memory_bytes": vm.total,
         "boot_time": None,  # Filled by collect_telemetry's psutil.boot_time().
     }
+    if cfg is not None and cfg.environment is not None:
+        info["environment"] = cfg.environment
+    return info

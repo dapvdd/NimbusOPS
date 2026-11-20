@@ -70,6 +70,19 @@ def test_ensure_enrolled_failure_propagates(tmp_path, monkeypatch):
         ensure_enrolled(_cfg(tmp_path))
 
 
+def test_dashboard_hostname_overrides_socket_hostname(tmp_path, monkeypatch):
+    def handler(request):
+        assert json.loads(request.content)["hostname"] == "demo.example.org"
+        return httpx.Response(200, json={"host_id": "h-demo", "agent_token": "secret"})
+
+    monkeypatch.setattr(agent_main, "Sender", _sender_factory(handler, []))
+    monkeypatch.setattr(agent_main.socket, "gethostname", lambda: "ubuntu-short")
+    cfg = Config(server_url="http://test", enrollment_token="", bootstrap_token="disposable",
+                 hostname="demo.example.org", state_file=tmp_path / "identity.json")
+    identity, created = ensure_enrolled(cfg)
+    assert created and identity.host_id == "h-demo"
+
+
 def test_run_exits_code3_when_credentials_rejected(tmp_path, monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": {"code": "UNAUTHORIZED", "message": "no"}})
@@ -81,6 +94,43 @@ def test_run_exits_code3_when_credentials_rejected(tmp_path, monkeypatch):
     _seed_identity(cfg)
     code = run(cfg)
     assert code == 3
+
+
+def test_main_returns_exit2_on_config_error(monkeypatch, tmp_path):
+    """Regression (RC1 recovery): invalid configuration must exit with code 2
+    and a clean stderr message, never an unhandled traceback (Config() builds
+    the dataclass, so __post_init__ runs at construction — outside the old
+    try/except around the second __post_init__ call)."""
+    import os
+
+    monkeypatch.setenv("NIMBUSOPS_AGENT_SERVER_URL", "http://x")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", "")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_STATE_FILE", str(tmp_path / "absent.json"))
+    # No identity file at that path: token-less startup must fail cleanly.
+    assert agent_main.main([]) == 2
+
+
+def test_main_accepts_tokenless_restart_with_stored_identity(monkeypatch, tmp_path):
+    """Regression (RC1 recovery): restart with a stored identity and no
+    enrollment token must proceed past configuration (exit code comes from the
+    run loop, not a ConfigError)."""
+    import os
+
+    cfg_state = tmp_path / "agent.json"
+    from nimbusops_agent.config import save_identity
+
+    save_identity(cfg_state, Identity(host_id="h1", agent_token="tok"))
+    monkeypatch.setenv("NIMBUSOPS_AGENT_SERVER_URL", "http://x")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", "")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_STATE_FILE", str(cfg_state))
+
+    def _run_ok(_cfg):
+        assert _cfg.enrollment_token == ""
+        assert _cfg.state_file == cfg_state
+        return 0
+
+    monkeypatch.setattr(agent_main, "run", _run_ok)
+    assert agent_main.main([]) == 0
 
 
 def test_run_graceful_stop_after_one_cycle(tmp_path, monkeypatch):
@@ -110,3 +160,140 @@ def test_run_graceful_stop_after_one_cycle(tmp_path, monkeypatch):
     payload = telem_posts[0]
     assert 0.0 <= payload["cpu_percent"] <= 100.0
     assert payload["memory_total_bytes"] > 0
+
+
+@pytest.mark.parametrize("http_status,expected_exit", [(200, 0), (422, 1)])
+def test_once_exits_without_waiting_for_next_cycle(tmp_path, monkeypatch, http_status, expected_exit):
+    """--once must return after reporting, rather than entering interval sleep."""
+    reports = []
+
+    def handler(request):
+        reports.append(request.url.path)
+        return httpx.Response(http_status, json={"retained": True})
+
+    monkeypatch.setattr(agent_main, "Sender", _sender_factory(handler, []))
+    monkeypatch.setattr(agent_main, "install_signal_handlers", lambda: None)
+    cfg = Config(server_url="http://test", state_file=tmp_path / "once.json",
+                 enrollment_token="test", once=True, telemetry_only=True)
+    _seed_identity(cfg)
+
+    def unexpected_wait(_seconds):
+        if _seconds != 0.2:  # psutil's CPU sampling interval is intentional
+            raise AssertionError("--once waited for another cycle")
+
+    monkeypatch.setattr(agent_main.time, "sleep", unexpected_wait)
+    assert run(cfg) == expected_exit
+    assert len(reports) == 2
+
+
+# ------------------------------------------------ RC2 F01 enrollment contract
+
+def test_ensure_enrolled_uses_bootstrap_token(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["bootstrap_token"] == "boot-secret"
+        assert "enrollment_token" not in body
+        return httpx.Response(200, json={"host_id": "h-boot", "agent_token": "agent-tok"})
+
+    monkeypatch.setattr(agent_main, "Sender", _sender_factory(handler, calls))
+    cfg = Config(
+        server_url="http://test",
+        enrollment_token="",
+        bootstrap_token="boot-secret",
+        state_file=tmp_path / "a.json",
+    )
+    identity, created = ensure_enrolled(cfg)
+    assert created is True
+    assert identity.host_id == "h-boot"
+
+
+# ------------------------------------------------ RC2 F09 module entrypoint
+
+def test_python_m_nimbusops_agent_runs_main(monkeypatch):
+    """`python -m nimbusops_agent` must be a real supported entrypoint."""
+    import runpy
+
+    import nimbusops_agent.main as agent_main_module
+
+    monkeypatch.setattr(agent_main_module, "main", lambda argv=None: 0)
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_module("nimbusops_agent", run_name="__main__")
+    assert exc.value.code == 0
+
+
+# ------------------------------------------ S4-3 environment classification
+
+def test_ensure_enrolled_sends_environment_when_set(tmp_path, monkeypatch):
+    """Config.environment set → enroll payload carries it verbatim."""
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"host_id": "h-env", "agent_token": "agent-tok"})
+
+    monkeypatch.setattr(agent_main, "Sender", _sender_factory(handler, []))
+    cfg = Config(
+        server_url="http://test",
+        enrollment_token="tok",
+        environment="PUBLIC-CLOUD",
+        state_file=tmp_path / "a.json",
+    )
+    identity, created = ensure_enrolled(cfg)
+    assert created is True
+    assert bodies and bodies[0]["environment"] == "PUBLIC-CLOUD"
+
+
+def test_ensure_enrolled_omits_environment_when_unset(tmp_path, monkeypatch):
+    """No operator setting → the payload must NOT carry an environment field."""
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"host_id": "h-noenv", "agent_token": "agent-tok"})
+
+    monkeypatch.setattr(agent_main, "Sender", _sender_factory(handler, []))
+    cfg = Config(server_url="http://test", enrollment_token="tok", state_file=tmp_path / "a.json")
+    identity, created = ensure_enrolled(cfg)
+    assert created is True
+    assert bodies and "environment" not in bodies[0]
+
+
+def test_main_reads_environment_from_env_var(monkeypatch, tmp_path):
+    """NIMBUSOPS_AGENT_ENVIRONMENT flows into Config via main()."""
+    import os
+
+    from nimbusops_agent.config import save_identity
+
+    state = tmp_path / "agent.json"
+    save_identity(state, Identity(host_id="h1", agent_token="tok"))
+    monkeypatch.setenv("NIMBUSOPS_AGENT_SERVER_URL", "http://x")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", "")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_STATE_FILE", str(state))
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENVIRONMENT", "PUBLIC-CLOUD")
+
+    seen = {}
+
+    def _run_ok(cfg):
+        seen["environment"] = cfg.environment
+        return 0
+
+    monkeypatch.setattr(agent_main, "run", _run_ok)
+    assert agent_main.main([]) == 0
+    assert seen["environment"] == "PUBLIC-CLOUD"
+
+
+def test_main_rejects_invalid_environment_env_var(monkeypatch, tmp_path):
+    """An invalid NIMBUSOPS_AGENT_ENVIRONMENT must exit 2 cleanly."""
+    import os
+
+    from nimbusops_agent.config import save_identity
+
+    state = tmp_path / "agent.json"
+    save_identity(state, Identity(host_id="h1", agent_token="tok"))
+    monkeypatch.setenv("NIMBUSOPS_AGENT_SERVER_URL", "http://x")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", "")
+    monkeypatch.setenv("NIMBUSOPS_AGENT_STATE_FILE", str(state))
+    monkeypatch.setenv("NIMBUSOPS_AGENT_ENVIRONMENT", "MARS")
+    assert agent_main.main([]) == 2

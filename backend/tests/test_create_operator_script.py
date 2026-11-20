@@ -15,7 +15,7 @@ def test_create_operator_inserts_hashed_admin(client, db_session):
     assert op is not None
     assert op.id == op_id
     assert op.role == "ADMIN"
-    assert op.password_hash.startswith("pbkdf2$")
+    assert op.password_hash.startswith("$argon2id$")
     assert "a-long-secret-password-123" not in op.password_hash
 
 

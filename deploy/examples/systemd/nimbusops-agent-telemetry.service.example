@@ -1,0 +1,38 @@
+# INERT EXAMPLE — substitute every @TOKEN@ before installing.
+# Telemetry-only agent: no Docker inventory, no command polling, no executor.
+# The unit sandbox is defense in depth; it is not a substitute for an
+# unprivileged account, filesystem permissions, or host-level policy.
+[Unit]
+Description=NimbusOps telemetry-only agent
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=3
+StartLimitIntervalSec=300
+
+[Service]
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=@INSTALL_DIR@/agent
+ExecStart=@VENV_DIR@/bin/python -m nimbusops_agent --telemetry-only --server-url @CONTROL_PLANE_URL@ --state-file @STATE_DIR@/agent.json
+StateDirectory=@STATE_DIR_NAME@
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+# Restrict egress to the control plane only. Use localhost when co-located,
+# otherwise an exact control-plane address or CIDR from your inventory.
+IPAddressDeny=any
+IPAddressAllow=@CONTROL_PLANE_ALLOW@
+InaccessiblePaths=-/run/docker.sock -/var/run/docker.sock -/usr/bin/docker -/usr/local/bin/docker -/usr/bin/sudo -/usr/bin/podman
+UnsetEnvironment=DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG
+Restart=on-failure
+RestartPreventExitStatus=2 3
+
+[Install]
+WantedBy=multi-user.target

@@ -2,25 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Host } from "../api/types";
-import { listSimServers } from "../lib/simRegistry";
 
 interface Item {
   id: string;
   name: string;
-  status: string;
+  status: Host["status"];
   environment: string;
-  simulated: boolean;
 }
 
-/**
- * Host-aware server list inside the sidebar. Real hosts come from the API;
- * simulated hosts come only from the browser-local registry and are labelled.
- */
+/** Host-aware server list inside the sidebar: real hosts from the API only. */
 export function ServerList() {
   const { hostId: selectedId } = useParams();
   const [real, setReal] = useState<Host[]>([]);
   const [query, setQuery] = useState("");
-  const [simVersion, setSimVersion] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -28,43 +22,29 @@ export function ServerList() {
       api
         .listHosts()
         .then((data) => {
-          if (alive) setReal(data.hosts);
+          if (alive) setReal(data?.hosts ?? []);
         })
         .catch(() => {
           // Sidebar list is supplementary; Servers page reports the failure.
         });
     load();
     const timer = window.setInterval(load, 30_000);
-    const sync = () => setSimVersion((v) => v + 1);
-    window.addEventListener("nimbusops:registry", sync);
-    window.addEventListener("storage", sync);
     return () => {
       alive = false;
       window.clearInterval(timer);
-      window.removeEventListener("nimbusops:registry", sync);
-      window.removeEventListener("storage", sync);
     };
   }, []);
 
-  const items = useMemo<Item[]>(() => {
-    const sim = simVersion >= 0 ? listSimServers() : [];
-    return [
-      ...real.map((h) => ({
+  const items = useMemo<Item[]>(
+    () =>
+      real.map((h) => ({
         id: h.id,
         name: h.hostname,
-        status: h.status,
+        status: h.is_revoked || h.enrollment_status === "REVOKED" ? "REVOKED" : h.status,
         environment: "REAL",
-        simulated: false,
       })),
-      ...sim.map((s) => ({
-        id: s.id,
-        name: s.name,
-        status: "SIMULATED",
-        environment: s.environment,
-        simulated: true,
-      })),
-    ];
-  }, [real, simVersion]);
+    [real],
+  );
 
   const filtered = items.filter((i) =>
     i.name.toLowerCase().includes(query.trim().toLowerCase()),
@@ -96,24 +76,18 @@ export function ServerList() {
               <span
                 aria-hidden="true"
                 className={`h-2 w-2 shrink-0 rounded-full ${
-                  item.simulated
-                    ? "bg-amber-400"
-                    : item.status === "ONLINE"
-                      ? "bg-signal-ok"
-                      : item.status === "STALE"
-                        ? "bg-signal-warn"
+                  item.status === "ONLINE"
+                    ? "bg-signal-ok"
+                    : item.status === "STALE"
+                      ? "bg-signal-warn"
+                      : item.status === "REVOKED"
+                        ? "bg-purple-400"
                         : "bg-signal-bad"
                 }`}
               />
               <span className="truncate">{item.name}</span>
-              <span
-                className={`ml-auto shrink-0 rounded px-1 py-0.5 text-[9px] uppercase tracking-wide ${
-                  item.simulated
-                    ? "border border-amber-400/40 text-amber-300"
-                    : "border border-ink-600 text-ink-400"
-                }`}
-              >
-                {item.simulated ? "SIMULATED" : item.environment}
+              <span className="ml-auto shrink-0 rounded border border-ink-600 px-1 py-0.5 text-[9px] uppercase tracking-wide text-ink-400">
+                {item.environment}
               </span>
             </Link>
           </li>

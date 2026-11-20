@@ -4,6 +4,13 @@ A centralized, cloud-ready platform for monitoring Linux hosts and managing Dock
 
 ## Project status
 
+**Current release candidate: RC2 (`v1.0.0-rc2`), derived from `v1.0.0-rc1`.**
+RC2 closes the audited RC1 security, correctness, and reliability defects
+(F01-F15) with regression tests. Docker *runtime* acceptance and the
+multi-host soak remain **blocked on this development machine** (no Docker
+Engine available); the authoritative, evidence-backed verdict is
+[RC2 final verdict](docs/RC2_FINAL_VERDICT.md).
+
 **Phase 1 — Single-host monitoring: implemented and locally verified.**
 The control server (FastAPI), dashboard (React/Vite/Tailwind), and host
 agent (Python/psutil) are implemented and tested; see

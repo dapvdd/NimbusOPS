@@ -18,6 +18,7 @@ Safety model (brief §6):
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 from typing import Any, Callable
@@ -32,6 +33,13 @@ LABEL_DEPLOYMENT = "nimbusops.deployment"
 
 # Approved images the agent will run, double-checking upstream approval.
 APPROVED_IMAGES = {"nginx:1.27-alpine"}
+
+# Deployment safety ceilings (fixed argv; never operator-tunable via payload).
+CPU_LIMIT = "0.25"
+MEMORY_LIMIT = "128m"
+MEMORY_SWAP_LIMIT = "128m"
+PIDS_LIMIT = "64"
+PUBLISH_HOST = "127.0.0.1"
 
 DEFAULT_TIMEOUT = 120.0
 
@@ -54,10 +62,11 @@ def parse_container_state(ps_line: str) -> str | None:
     if not line:
         return None
     lowered = line.lower()
-    if lowered.startswith("up"):
-        return "RUNNING"
+    # RC2 F06: "Up 3 hours (Paused)" starts with "up" but is NOT running.
     if "paused" in lowered:
         return "PAUSED"
+    if lowered.startswith("up"):
+        return "RUNNING"
     if lowered.startswith("created"):
         return "CREATED"
     if lowered.startswith("exited"):
@@ -152,6 +161,14 @@ class DockerExecutor:
                 "error_code": "UNAPPROVED_OPERATION",
                 "error_message": str(exc)[:512],
             }
+        except VerifyFailed as exc:
+            # RC2 F06: inspection/verification could not establish the truth.
+            # This is UNKNOWN, never a fabricated success or stopped state.
+            return {
+                "status": "UNKNOWN",
+                "error_code": "VERIFY_FAILED",
+                "error_message": str(exc)[:512],
+            }
         except TimeoutError as exc:
             return {
                 "status": "UNKNOWN",
@@ -164,6 +181,52 @@ class DockerExecutor:
                 "error_code": "UNKNOWN",
                 "error_message": f"{type(exc).__name__}: {exc}"[:512],
         }
+
+    # ---------------------------------------------------------- ownership
+
+    def _inspect_labels(self, name: str) -> dict[str, str] | None:
+        """Read a container's labels.
+
+        Returns the label map when the container exists, ``None`` when it is
+        absent. Any other inspection failure raises :class:`VerifyFailed` so
+        callers fail closed instead of guessing ownership.
+        """
+        code, out, err = self._run(
+            ["docker", "inspect", "--format", "{{json .Config.Labels}}", name]
+        )
+        if code != 0:
+            lowered = (err or "").lower()
+            if "no such object" in lowered or "no such container" in lowered or "not found" in lowered:
+                return None
+            raise VerifyFailed(f"container inspection failed for {name!r} (exit={code})")
+        raw = (out or "").strip()
+        if not raw or raw == "null":
+            return {}
+        try:
+            labels = json.loads(raw)
+        except ValueError as exc:
+            raise VerifyFailed(
+                f"container inspection returned unparseable metadata for {name!r}"
+            ) from exc
+        if not isinstance(labels, dict):
+            raise VerifyFailed(f"container inspection returned unexpected metadata for {name!r}")
+        return {str(k): str(v) for k, v in labels.items()}
+
+    def _assert_owned(self, name: str, deployment_id: str) -> None:
+        """Fail closed unless the container is provably ours for this deployment.
+
+        The deployment id is unique per (host, template), so a matching
+        deployment label also proves the expected host identity.
+        """
+        labels = self._inspect_labels(name)
+        if labels is None:
+            raise ManagedResourceError(f"container {name!r} does not exist on this host")
+        if labels.get("nimbusops.managed") != "true":
+            raise ManagedResourceError(f"container {name!r} is not managed by NimbusOps")
+        if labels.get("nimbusops.deployment") != deployment_id:
+            raise ManagedResourceError(
+                f"container {name!r} belongs to a different deployment (ownership mismatch)"
+            )
 
     # ------------------------------------------------------------ deploy
 
@@ -180,6 +243,27 @@ class DockerExecutor:
         self.ensure_available()
         host_port = int(template.get("host_port", 18080))
 
+        # RC2 F05: a name collision must never be resolved by mutating a
+        # container we cannot prove we own.
+        existing = self._inspect_labels(name)
+        if existing is not None:
+            if (
+                existing.get("nimbusops.managed") != "true"
+                or existing.get("nimbusops.deployment") != deployment_id
+            ):
+                raise ManagedResourceError(
+                    f"container name {name!r} is already used by a resource not owned "
+                    "by this deployment"
+                )
+            return {
+                "status": "FAILED",
+                "error_code": "CONTAINER_EXISTS",
+                "error_message": (
+                    f"owned container {name!r} already exists; recreation is not an "
+                    "approved operation (use START/STOP/RESTART)"
+                ),
+            }
+
         # 1. Pull (explicit image tag; bounded output).
         code, _, err = self._run(["docker", "pull", image])
         if code != 0:
@@ -189,15 +273,21 @@ class DockerExecutor:
                 "error_message": f"pull failed: {err.strip()[:300]}",
             }
 
-        # 2. Run: detached, deterministic name, labels, published port,
-        #    NO privileged, NO volumes/mounts, NO extra capabilities.
+        # 2. Run: detached, deterministic name, labels, hard resource ceilings,
+        #    loopback-only publish, NO privileged, NO host network, NO mounts.
+        #    All values are fixed here — never interpolated from the payload
+        #    beyond the validated numeric port/name/deployment id.
         run_argv = [
             "docker", "run", "-d",
             "--name", name,
             "--label", LABEL_MANAGED,
             "--label", f"{LABEL_DEPLOYMENT}={deployment_id}",
             "--restart", "no",
-            "-p", f"{host_port}:{int(template.get('container_port', 80))}",
+            f"--cpus={CPU_LIMIT}",
+            f"--memory={MEMORY_LIMIT}",
+            f"--memory-swap={MEMORY_SWAP_LIMIT}",
+            f"--pids-limit={PIDS_LIMIT}",
+            "-p", f"{PUBLISH_HOST}:{host_port}:{int(template.get('container_port', 80))}",
             image,
         ]
         code, _, err = self._run(run_argv)
@@ -264,6 +354,7 @@ class DockerExecutor:
         if not name.startswith(MANAGED_PREFIX):
             raise ManagedResourceError(f"container name {name!r} outside managed prefix")
         self.ensure_available()
+        self._assert_owned(name, deployment_id)
         code, _, err = self._run(["docker", "start", name])
         if code != 0:
             return {
@@ -277,6 +368,7 @@ class DockerExecutor:
         if not name.startswith(MANAGED_PREFIX):
             raise ManagedResourceError(f"container name {name!r} outside managed prefix")
         self.ensure_available()
+        self._assert_owned(name, deployment_id)
         code, _, err = self._run(["docker", "stop", name])
         if code != 0:
             return {
@@ -287,8 +379,22 @@ class DockerExecutor:
         code, out, _ = self._run(
             ["docker", "ps", "-a", "--filter", f"name=^{name}$", "--format", "{{.Status}}"]
         )
-        state = parse_container_state(out) if code == 0 else None
-        if state not in ("EXITED", None):
+        # RC2 F06: an inspection failure or an absent row proves nothing. It
+        # must not become SUCCEEDED/EXITED evidence.
+        if code != 0:
+            return {
+                "status": "UNKNOWN",
+                "error_code": "VERIFY_FAILED",
+                "error_message": f"stop state unverified: docker ps failed (exit={code})",
+            }
+        state = parse_container_state(out)
+        if state is None:
+            return {
+                "status": "UNKNOWN",
+                "error_code": "VERIFY_FAILED",
+                "error_message": "stop state unverified: docker ps returned no container row",
+            }
+        if state != "EXITED":
             return {
                 "status": "UNKNOWN",
                 "error_code": "VERIFY_FAILED",
@@ -296,7 +402,7 @@ class DockerExecutor:
             }
         return {
             "status": "SUCCEEDED",
-            "result": {"container_state": state or "EXITED", "http_ok": None},
+            "result": {"container_state": state, "http_ok": None},
         }
 
     # ------------------------------------------------------------ probe
@@ -306,6 +412,7 @@ class DockerExecutor:
         if not name.startswith(MANAGED_PREFIX):
             raise ManagedResourceError(f"container name {name!r} outside managed prefix")
         self.ensure_available()
+        self._assert_owned(name, deployment_id)
         code, _, err = self._run(["docker", "restart", name])
         if code != 0:
             return {

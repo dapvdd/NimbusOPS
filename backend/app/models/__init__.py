@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -41,6 +41,12 @@ class Host(Base):
     previous_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     previous_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Sprint D3: mode the RUNNING agent reports via heartbeat (executor |
+    # telemetry-only). Nullable: NULL means "not reported" (older agent) —
+    # never guessed from docker_enabled. Every heartbeat rewrites it,
+    # including back to NULL, so a stale value cannot outlive its binary.
+    agent_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     # Agent-reported metadata (heartbeat-refreshed).
     agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     platform: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -56,6 +62,10 @@ class Host(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_telemetry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Sprint 5 (§15.2): bumped on every revocation-changing credential event;
+    # provisioning candidates are fenced against this counter.
+    revocation_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
 
 
 class Telemetry(Base):
@@ -135,6 +145,14 @@ class DeploymentOperation(Base):
     __table_args__ = (
         Index("ix_ops_deployment_created", "deployment_id", "created_at"),
         Index("ix_ops_host_status", "host_id", "status"),
+        # RC2 F07: at most one nonterminal operation per deployment, enforced
+        # by the database (not just a read-then-write check).
+        Index(
+            "ux_ops_inflight_deployment",
+            "deployment_id",
+            unique=True,
+            sqlite_where=text("status IN ('QUEUED','RUNNING')"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -149,6 +167,9 @@ class DeploymentOperation(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Phase 3B: claim deadline; RUNNING ops past this point are re-queued by the reconciler.
     timeout_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # RC2 F07: fencing counter, incremented on every claim. A result carrying a
+    # stale generation is refused so a delayed reply cannot win after a requeue.
+    claim_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     # Verifiable evidence the agent reported (container id, http probe, etc.).
@@ -193,6 +214,10 @@ class BootstrapToken(Base):
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consumed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)  # host id
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Sprint D2: enrollment intent enforced at issue AND consumption.
+    # 'enroll' (default; legacy rows backfill to this) requires the hostname to
+    # be new; 'reenroll' requires an existing host and is the only un-revoke path.
+    intent: Mapped[str] = mapped_column(String(16), nullable=False, default="enroll")
 
 
 class Operator(Base):
@@ -254,3 +279,54 @@ class InventorySnapshot(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     containers_json: Mapped[str] = mapped_column(String(65535), nullable=False, default="[]")
+
+
+# ------------------------------------------------------------------ Sprint 5
+
+
+from .provisioning import (  # noqa: E402
+    ProvisioningAttempt,
+    ProvisioningChallenge,
+    ProvisioningConnection,
+    ProvisioningCredentialCommit,
+    ProvisioningEvent,
+    ProvisioningGrant,
+    ProvisioningJob,
+    ProvisioningMachine,
+    ProvisioningOwnership,
+    ProvisioningReceipt,
+    ProvisioningRequest,
+    ProvisioningTarget,
+    ProvisioningValidation,
+)
+
+__all__ = [
+    "Base",
+    "BootstrapToken",
+    "DeploymentOperation",
+    "DeploymentTemplate",
+    "EnrollmentAudit",
+    "Host",
+    "HostEvent",
+    "InventorySnapshot",
+    "ManagedDeployment",
+    "Operator",
+    "OperatorSession",
+    "OperationEvent",
+    "ProvisioningAttempt",
+    "ProvisioningChallenge",
+    "ProvisioningConnection",
+    "ProvisioningCredentialCommit",
+    "ProvisioningEvent",
+    "ProvisioningGrant",
+    "ProvisioningJob",
+    "ProvisioningMachine",
+    "ProvisioningOwnership",
+    "ProvisioningReceipt",
+    "ProvisioningRequest",
+    "ProvisioningTarget",
+    "ProvisioningValidation",
+    "Telemetry",
+    "new_uuid",
+    "utcnow",
+]

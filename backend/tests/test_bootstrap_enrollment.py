@@ -18,8 +18,8 @@ from backend.app.models import BootstrapToken, Host
 from backend.tests.test_operator_auth import _seed_operator
 
 
-def _issue(client, admin_token: str, hostname: str, expires_in: int | None = None):
-    payload = {"hostname": hostname}
+def _issue(client, admin_token: str, hostname: str, expires_in: int | None = None, *, intent: str = "enroll"):
+    payload = {"hostname": hostname, "intent": intent}
     if expires_in is not None:
         payload["expires_in_seconds"] = expires_in
     return client.post(
@@ -159,7 +159,7 @@ def test_enroll_wrong_hostname_scope_401(client, db_session):
     tok = _issue(client, admin, "right-host").json()["token"]
     resp = _enroll(client, "other-host", tok)
     assert resp.status_code == 401
-    assert resp.json()["error"]["code"] == "BOOTSTRAP_TOKEN_INVALID"
+    assert resp.json()["error"]["code"] == "BOOTSTRAP_TOKEN_HOSTNAME_MISMATCH"
 
 
 def test_enroll_unknown_token_401(client):
@@ -209,7 +209,7 @@ def test_revoked_host_reenroll_requires_operator_bootstrap(client, db_session, e
     # Even a *fresh* legacy path cannot touch it; only a bootstrap token for
     # this hostname re-enrolls (full flow tested in Task 5's re-enroll tests).
     admin = _admin(client, db_session)
-    tok = _issue(client, admin, "gone-host").json()["token"]
+    tok = _issue(client, admin, "gone-host", intent="reenroll").json()["token"]
     resp = _enroll(client, "gone-host", tok)
     assert resp.status_code == 200
     body = resp.json()

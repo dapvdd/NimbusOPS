@@ -11,6 +11,10 @@ Design (brief §6):
 
 import hashlib
 import secrets
+from argon2 import PasswordHasher
+from argon2.exceptions import VerificationError, InvalidHashError
+
+_password_hasher = PasswordHasher()
 
 from .config import get_settings
 
@@ -57,13 +61,16 @@ _OPERATOR_KDF_ITERATIONS = 240_000  # PBKDF2-SHA256; real KDF for human password
 def hash_operator_password(password: str) -> str:
     """PBKDF2-SHA256 for operator passwords (NOT the fast token hash —
     passwords are human-chosen and need a KDF; docs/SECURITY.md limitation 4)."""
-    salt = secrets.token_bytes(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _OPERATOR_KDF_ITERATIONS)
-    return f"pbkdf2${_OPERATOR_KDF_ITERATIONS}${salt.hex()}${dk.hex()}"
+    return _password_hasher.hash(password)
 
 
 def verify_operator_password(password: str, stored: str) -> bool:
     """Constant-time PBKDF2 verification of the stored `pbkdf2$iter$salt$dk` string."""
+    if stored.startswith("$argon2"):
+        try:
+            return _password_hasher.verify(stored, password)
+        except (VerificationError, InvalidHashError):
+            return False
     try:
         scheme, iterations, salt_hex, dk_hex = stored.split("$", 3)
         if scheme != "pbkdf2":

@@ -27,17 +27,29 @@ NGINX_TEMPLATE = {
 class FakeRunner:
     """Records argv, returns canned (returncode, stdout, stderr)."""
 
-    def __init__(self, results=None):
+    def __init__(self, results=None, inspect_labels=None):
         self.calls: list[list[str]] = []
         self.results = results or []
+        # RC2 F05: lifecycle ops now inspect labels first. Default: container
+        # absent. Tests that mutate a container pass its owned label set.
+        self.inspect_labels = inspect_labels
 
     def __call__(self, argv, timeout):
+        if argv[:2] == ["docker", "inspect"]:
+            import json as _json
+
+            if self.inspect_labels is None:
+                return 1, "", f"Error: No such object: {argv[-1]}"
+            return 0, _json.dumps(self.inspect_labels), ""
         self.calls.append(list(argv))
         if callable(self.results):
             return self.results(len(self.calls), argv)
         if self.results:
             return self.results.pop(0)
         return 0, "", ""
+
+
+OWNED_LABELS = {"nimbusops.managed": "true", "nimbusops.deployment": "dep-1"}
 
 
 # ------------------------------------------------------------ availability
@@ -68,7 +80,7 @@ def test_default_host_port_matches_template_catalog():
     assert result["status"] == "SUCCEEDED", result
     run_call = next(c for c in ex._runner.calls if c[:2] == ["docker", "run"])  # type: ignore[attr-defined]
     assert "-p" in run_call
-    assert run_call[run_call.index("-p") + 1].startswith("18080:")
+    assert run_call[run_call.index("-p") + 1] == "127.0.0.1:18080:80"
 
 
 def test_docker_unavailable_raises(monkeypatch):
@@ -184,7 +196,8 @@ def test_start_stop_only_touches_labeled_managed_container():
             (0, "24.0.7", ""),  # ensure_available (start)
             (0, "", ""),  # start
             (0, "Up 1 second", ""),  # verify
-        ]
+        ],
+        inspect_labels=OWNED_LABELS,
     )
     ex = DockerExecutor(runner=lambda argv, timeout: (recorded.append(argv), runner(argv, timeout))[1])
 
@@ -213,7 +226,8 @@ def test_stop_succeeds_and_verifies():
             (0, "available", ""),
             (0, "", ""),  # stop
             (0, "Exited (0)", ""),  # verify
-        ]
+        ],
+        inspect_labels=OWNED_LABELS,
     )
     ex = DockerExecutor(runner=runner)
     outcome = ex.stop("nimbusops-nginx-demo-abc12345", deployment_id="dep-1")

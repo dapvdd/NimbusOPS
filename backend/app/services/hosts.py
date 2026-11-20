@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core.codes import ErrorCode
@@ -58,6 +59,27 @@ def compute_status(
     return "OFFLINE"
 
 
+def effective_status(
+    *,
+    is_revoked: bool,
+    enrollment_status: str,
+    last_seen_at: datetime | None,
+    now: datetime,
+    stale_s: int,
+    offline_s: int,
+) -> str:
+    """Display-truth status (sprint D1): revocation always wins.
+
+    A revoked host is terminal until re-enrollment — it must never render as
+    ONLINE (fresh heartbeat) or merely OFFLINE. Tombstoned hosts carry
+    `enrollment_status="REVOKED"` with `is_revoked=False`; both spellings are
+    revoked. Non-revoked hosts keep the exact `compute_status` contract.
+    """
+    if is_revoked or enrollment_status == "REVOKED":
+        return "REVOKED"
+    return compute_status(last_seen_at, now, stale_s, offline_s)
+
+
 def telemetry_age_seconds(last_telemetry_at: datetime | None, now: datetime) -> float | None:
     last_telemetry_at = _as_utc(last_telemetry_at)
     if last_telemetry_at is None:
@@ -87,25 +109,32 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
     """
     existing = db.scalar(select(Host).where(Host.hostname == req.hostname))
     if existing is not None:
-        if existing.is_revoked and not via_bootstrap:
+        if not via_bootstrap:
+            # RC2 F08: a shared enrollment secret must never silently replace
+            # another host's credential. Only an operator-issued, hostname-
+            # scoped, single-use bootstrap token may re-enroll a hostname.
             raise ApiError(
                 409,
                 ErrorCode.HOSTNAME_TAKEN,
-                "hostname belongs to a revoked host; operator re-enroll required",
+                "hostname already enrolled; an operator-issued bootstrap token is required to re-enroll",
             )
         # Re-enrollment: rotate the token, keep host identity (id stable).
+        # via_bootstrap is guaranteed True here: the not-via_bootstrap case
+        # raised 409 above, so the legacy re-enroll spellings are gone.
         token = generate_agent_token()
         existing.agent_token_hash = hash_token(token)
+        existing.previous_token_hash = None
+        existing.previous_token_expires_at = None
         existing.is_revoked = False
         existing.revoked_at = None
         existing.enrollment_status = "ENROLLED"
-        existing.credential_version = (existing.credential_version or 1) + (1 if via_bootstrap else 0)
+        existing.credential_version = (existing.credential_version or 1) + 1
         record_host_event(
             db,
             existing.id,
-            "RE_ENROLLED" if via_bootstrap else "CREDENTIAL_ROTATED",
+            "RE_ENROLLED",
             actor="agent",
-            detail=f"hostname={req.hostname} via={'bootstrap' if via_bootstrap else 'legacy-token'}",
+            detail=f"hostname={req.hostname} via=bootstrap",
         )
         db.add(
             EnrollmentAudit(
@@ -116,9 +145,8 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
         )
         db.commit()
         logger.info(
-            "enrollment: re-enrolled host hostname=%s via=%s (token rotated)",
+            "enrollment: re-enrolled host hostname=%s via=bootstrap (token rotated)",
             req.hostname,
-            "bootstrap" if via_bootstrap else "legacy",
         )
         return existing, token
 
@@ -137,9 +165,10 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
         boot_time=req.boot_time,
     )
     db.add(host)
+    db.flush()
     record_host_event(
         db,
-        None,
+        host.id,
         "ENROLLED",
         actor="agent",
         detail=f"hostname={req.hostname} via={'bootstrap' if via_bootstrap else 'legacy-token'}",
@@ -151,7 +180,17 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
             detail=None,
         )
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # Two concurrent first-enrollments for one hostname: the unique index
+        # decides the winner. Fail closed rather than creating a second row.
+        db.rollback()
+        raise ApiError(
+            409,
+            ErrorCode.HOSTNAME_TAKEN,
+            "hostname was enrolled concurrently; retry with an operator-issued bootstrap token",
+        ) from exc
     logger.info("enrollment: enrolled new host hostname=%s host_id=%s", req.hostname, host.id)
     return host, token
 
@@ -209,6 +248,10 @@ def touch_heartbeat(db: Session, host: Host, req: HeartbeatRequest) -> datetime:
             setattr(host, field, value)
     if req.boot_time is not None:
         host.boot_time = req.boot_time
+    # Sprint D3: the reported mode is rewritten EVERY heartbeat, including
+    # None (an older agent's omission clears it) — a stale value must never
+    # outlive the binary that reported it.
+    host.agent_mode = req.agent_mode
     db.commit()
     return now
 

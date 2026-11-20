@@ -66,6 +66,37 @@ def _agent_sender(server_url, transport, host_id="", token=""):
     return s
 
 
+def test_bootstrap_fqdn_agent_over_real_http(server_url, tmp_path):
+    """Disposable admin, scoped bootstrap and genuine collectors over loopback."""
+    from backend.app.core.db import SessionLocal
+    from backend.tests.test_operator_auth import _seed_operator
+    from nimbusops_agent.config import Config
+    from nimbusops_agent.main import ensure_enrolled, run_cycle
+
+    server, _ = server_url
+    with SessionLocal() as db:
+        _seed_operator(db, username="scratch-http-admin")
+    with httpx.Client(base_url=server) as operator:
+        login = operator.post("/api/v1/operators/login", json={"username": "scratch-http-admin", "password": "secret-pw"})
+        assert login.status_code == 200
+        operator.headers["Authorization"] = f"Bearer {login.json()['session_token']}"
+        issued = operator.post("/api/v1/operators/bootstrap-tokens", json={"hostname": "http-demo.example.org"})
+        assert issued.status_code == 201
+        cfg = Config(server_url=server, enrollment_token="", bootstrap_token=issued.json()["token"], hostname="http-demo.example.org", state_file=tmp_path / "agent.json", telemetry_only=True)
+        identity, created = ensure_enrolled(cfg)
+        assert created
+        sender = _agent_sender(server, None, identity.host_id, identity.agent_token)
+        try:
+            ok, detail = run_cycle(sender, telemetry_only=True)
+            assert ok, detail
+        finally:
+            sender.close()
+        host = operator.get(f"/api/v1/hosts/{identity.host_id}").json()
+        assert host["hostname"] == "http-demo.example.org"
+        assert host["status"] == "ONLINE"
+        assert host["last_seen_at"] and host["last_telemetry_at"] and host["latest_metrics"]
+
+
 def test_full_agent_to_backend_flow(server_url):
     server, transport = server_url
 
@@ -96,8 +127,13 @@ def test_full_agent_to_backend_flow(server_url):
     assert row["memory_total_bytes"] == telemetry["memory_total_bytes"]
     assert row["disk_total_bytes"] == telemetry["disk_total_bytes"]
 
-    # 4. Public API exposes it with honest status.
+    # 4. Human-authenticated API exposes it with honest status.
     public = httpx.Client(base_url=server)
+    from backend.scripts.create_operator import create_operator
+    create_operator('integration-reader', 'integration-test-password', 'VIEWER')
+    session = public.post('/api/v1/operators/login', json={'username':'integration-reader','password':'integration-test-password'})
+    assert session.status_code == 200
+    public.headers['Authorization'] = 'Bearer ' + session.json()['session_token']
     host = public.get(f"/api/v1/hosts/{host_id}").json()
     assert host["status"] == "ONLINE"
     assert host["latest_metrics"]["cpu_percent"] == pytest.approx(telemetry["cpu_percent"])

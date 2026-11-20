@@ -151,25 +151,45 @@ def list_operations(
     status: str | None = Query(default=None, max_length=16),
     deployment_id: str | None = Query(default=None, max_length=36),
     limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> OperationListResponse:
-    """Operation history: filtered, bounded, deterministic (created ASC)."""
+    """Operation history: filtered, bounded, newest-first with offset paging.
+
+    RC2 F10: reading a bounded window from the oldest row made every recent
+    operation invisible. The window now starts at the newest row and `total`
+    (pre-window) tells the client how much history exists beyond it.
+    """
+    from sqlalchemy import func
+
     from ..models import DeploymentOperation
 
-    stmt = select(DeploymentOperation).order_by(
-        DeploymentOperation.created_at.asc(), DeploymentOperation.id.asc()
-    )
+    filters = []
     if host_id is not None:
-        stmt = stmt.where(DeploymentOperation.host_id == host_id)
+        filters.append(DeploymentOperation.host_id == host_id)
     if deployment_id is not None:
-        stmt = stmt.where(DeploymentOperation.deployment_id == deployment_id)
+        filters.append(DeploymentOperation.deployment_id == deployment_id)
     if status is not None:
         if status not in ("QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "UNKNOWN"):
             raise ApiError(422, ErrorCode.INVALID_OPERATION, f"unknown status {status!r}")
-        stmt = stmt.where(DeploymentOperation.status == status)
-    rows = db.scalars(stmt.limit(limit)).all()
+        filters.append(DeploymentOperation.status == status)
+
+    total = int(
+        db.scalar(select(func.count()).select_from(DeploymentOperation).where(*filters)) or 0
+    )
+    stmt = (
+        select(DeploymentOperation)
+        .where(*filters)
+        .order_by(
+            DeploymentOperation.created_at.desc(),
+            DeploymentOperation.id.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = db.scalars(stmt).all()
     items = [svc._op_out(r) for r in rows]
-    return OperationListResponse(operations=items, count=len(items))
+    return OperationListResponse(operations=items, count=len(items), total=total, offset=offset)
 
 
 @router.get("/operations/{operation_id}/events", response_model=OperationEventsResponse)

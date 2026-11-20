@@ -1,0 +1,28 @@
+# INERT EXAMPLE — substitute every @TOKEN@ before installing.
+# Derived from the reviewed RC2 demo units, but parameterized and NOT
+# installed or validated on Linux by NimbusOps. Keep the install directory
+# outside home directories so ProtectHome=yes stays usable.
+[Unit]
+Description=NimbusOps control-plane API
+After=network.target
+
+[Service]
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=@INSTALL_DIR@
+EnvironmentFile=@CONFIG_DIR@/backend.env
+ExecStart=@VENV_DIR@/bin/python -m uvicorn backend.app.main:app --app-dir @INSTALL_DIR@ --host @API_BIND_ADDRESS@ --port @API_PORT@ --workers 1
+StateDirectory=@STATE_DIR_NAME@
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

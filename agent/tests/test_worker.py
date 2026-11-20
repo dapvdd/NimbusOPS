@@ -18,6 +18,9 @@ class FakeHttp:
         self.poll_calls = 0
         self.result_calls = []
         self.fail_next_polls = 0
+        # New contract: dispatch authorization is explicit; tests that exercise
+        # execution must opt in, matching the real Sender-derived flag.
+        self.docker_enabled = True
 
     def poll(self) -> dict:
         self.poll_calls += 1
@@ -194,3 +197,41 @@ def test_invalid_command_payload_does_not_crash_worker():
     assert outcome == WorkerOutcome.EXECUTED
     assert http.result_calls[0][1]["status"] == "FAILED"
     assert http.result_calls[0][1]["error_code"] == "UNAPPROVED_OPERATION"
+
+
+# ------------------------------------------------ RC2 F04 disablement race
+
+def test_worker_refuses_to_execute_when_docker_disabled():
+    """Defense in depth: even if a command is delivered (e.g. claimed just
+    before an operator disabled Docker), the agent must not mutate anything."""
+    http = FakeHttp(polls=[{"commands": [make_command(op_type="RESTART")]}])
+    http.docker_enabled = False
+    ex = NoopExecutor()
+    w = CommandWorker(http=http, executor=ex)
+
+    outcome = w.poll_once()
+
+    assert ex.executed == [], "no Docker mutation may run while disabled"
+    assert outcome == WorkerOutcome.EXECUTED  # it did process the delivery
+    payload = http.result_calls[0][1]
+    assert payload["status"] == "UNKNOWN"
+    assert payload["error_code"] == "DOCKER_DISABLED"
+    assert "container_state" not in (payload.get("result") or {})
+
+
+# ------------------------------------------------ RC2 F07 claim fencing echo
+
+def test_worker_echoes_claim_generation_with_result():
+    cmd = make_command(op_type="RESTART")
+    cmd["claim_generation"] = 3
+    http = FakeHttp(polls=[{"commands": [cmd]}])
+    w = CommandWorker(http=http, executor=NoopExecutor())
+    w.poll_once()
+    assert http.result_calls[0][1]["claim_generation"] == 3
+
+
+def test_worker_omits_claim_generation_when_server_did_not_send_one():
+    http = FakeHttp(polls=[{"commands": [make_command(op_type="RESTART")]}])
+    w = CommandWorker(http=http, executor=NoopExecutor())
+    w.poll_once()
+    assert "claim_generation" not in http.result_calls[0][1]

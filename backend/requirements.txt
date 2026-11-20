@@ -6,6 +6,7 @@ sqlalchemy==2.0.43
 pydantic==2.11.9
 pydantic-settings==2.10.1
 python-multipart==0.0.20
+argon2-cffi==25.1.0
 
 # Test dependencies
 pytest==8.4.2

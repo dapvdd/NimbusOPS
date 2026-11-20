@@ -5,6 +5,7 @@ re-enroll bootstrap issuance.
 """
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -23,6 +24,9 @@ router = APIRouter(prefix="/api/v1/hosts")
 
 class HostPatchRequest(BaseModel):
     docker_enabled: bool | None = Field(default=None)
+    # S4-3 (Phase B): operator-set classification. Literal validation by
+    # Pydantic → 422 on unknown values before the handler runs.
+    environment: Literal["PRIVATE", "PUBLIC-CLOUD"] | None = Field(default=None)
 
 
 class RotateCredentialRequest(BaseModel):
@@ -41,6 +45,7 @@ class LifecycleHostOut(BaseModel):
     is_revoked: bool
     revoked_at: datetime | None
     credential_version: int
+    environment: Literal["PRIVATE", "PUBLIC-CLOUD"]
 
 
 def _host_out(host: Host) -> dict:
@@ -52,6 +57,7 @@ def _host_out(host: Host) -> dict:
         "is_revoked": bool(host.is_revoked),
         "revoked_at": host.revoked_at,
         "credential_version": host.credential_version or 1,
+        "environment": host.environment,
     }
 
 
@@ -69,14 +75,17 @@ def patch_host(
     op: object = Depends(require_operator(role="ADMIN")),
     db: Session = Depends(get_db),
 ) -> dict:
-    """§4.1: only `docker_enabled` is operator-settable here."""
-    if req.docker_enabled is None:
+    """§4.1: `docker_enabled` and (S4-3) `environment` are operator-settable."""
+    if req.docker_enabled is None and req.environment is None:
         raise ApiError(422, ErrorCode.INTERNAL, "no settable fields in request")
     host = _get_host_or_404(db, host_id)
-    host.docker_enabled = req.docker_enabled
     from ..services.enrollment import record_host_event
 
-    record_host_event(db, host.id, "DOCKER_ENABLED" if req.docker_enabled else "DOCKER_DISABLED", actor=op.username)
+    if req.docker_enabled is not None:
+        host.docker_enabled = req.docker_enabled
+        record_host_event(db, host.id, "DOCKER_ENABLED" if req.docker_enabled else "DOCKER_DISABLED", actor=op.username)
+    if req.environment is not None:
+        host_lifecycle.set_environment(db, host, req.environment, op.username)
     db.commit()
     return _host_out(host)
 
