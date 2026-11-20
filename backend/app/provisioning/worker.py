@@ -18,7 +18,11 @@ from sqlalchemy.orm import Session
 from ..core.db import SessionLocal
 from ..core.errors import ApiError
 from ..models import BootstrapToken, Host, Operator, Telemetry
-from ..models.provisioning import ProvisioningEvent, ProvisioningJob
+from ..models.provisioning import (
+    ProvisioningEvent,
+    ProvisioningJob,
+    ProvisioningOwnership,
+)
 from ..services.enrollment import issue_bootstrap_token
 from ..services.provisioning import now_ms, policy_hash
 from .ssh import Target, install, preflight
@@ -175,8 +179,18 @@ def _run_once(db: Session, targets: dict[str, Target], origin: str) -> None:
             actor = db.get(Operator, job.requester_id)
             if actor is None or actor.role != "ADMIN":
                 raise ValueError("ADMIN_AUTHORIZATION_REVOKED")
+            owner = db.get(ProvisioningOwnership, job.target_id)
+            if owner is None or owner.owner_job_id != job.id:
+                raise ValueError("OWNERSHIP_CHANGED")
+            plan["ownership_generation"] = owner.generation
             token, plaintext = issue_bootstrap_token(
-                db, actor, target.hostname, 600, commit=False
+                db,
+                actor,
+                target.hostname,
+                600,
+                commit=False,
+                provisioning_job_id=job.id,
+                ownership_generation=owner.generation,
             )
             plan["bootstrap_token_id"] = token.id
             job.plan_json = json.dumps(plan)

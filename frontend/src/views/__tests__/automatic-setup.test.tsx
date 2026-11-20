@@ -3,6 +3,21 @@ import { afterEach, it, expect, vi } from 'vitest';
 import AutomaticSetup from '../AutomaticSetup';
 afterEach(() => {vi.restoreAllMocks(); sessionStorage.clear();});
 
+it('allows fresh preflight after definitive rejection of a never-dispatched intent', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  const { ApiFailure } = await import('../../api/client');
+  sessionStorage.setItem('nimbusops.setup.confirm.v1', JSON.stringify({key: 'expired-key', plan: {
+    target_id: 'target', validation_id: 'v', approval_hash: 'hash', expires_at: 0, facts: {}, changes: []}}));
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: []});
+  vi.spyOn(provisioning, 'recover').mockRejectedValue(new ApiFailure('http', 'not found', 404));
+  vi.spyOn(provisioning, 'confirm').mockRejectedValue(new ApiFailure('http', 'invalid approval', 409));
+  render(<AutomaticSetup />);
+  fireEvent.click(await screen.findByRole('button', {name: 'Recover same confirmation'}));
+  fireEvent.click(await screen.findByRole('button', {name: /clear rejected confirmation/i}));
+  expect(screen.getByLabelText('Authorized target')).toBeInTheDocument();
+  expect(sessionStorage.getItem('nimbusops.setup.confirm.v1')).toBeNull();
+});
+
 it('fails closed without authorized targets and never asks for credentials', async () => {
   const { provisioning } = await import('../../api/provisioning');
   vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: []});
@@ -10,6 +25,46 @@ it('fails closed without authorized targets and never asks for credentials', asy
   expect(await screen.findByText(/no authorized targets/i)).toBeInTheDocument();
   expect(screen.queryByLabelText(/password|private key/i)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', {name: /confirm installation/i})).not.toBeInTheDocument();
+});
+
+it('recovers a persisted confirmation after refresh without dispatching again', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  sessionStorage.setItem('nimbusops.setup.confirm.v1', JSON.stringify({key: 'stable-key', plan: {
+    target_id: 'target', validation_id: 'v', approval_hash: 'hash', expires_at: 0, facts: {}, changes: []}}));
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: []});
+  const recover = vi.spyOn(provisioning, 'recover').mockResolvedValue({id: 'recovered', state: 'PENDING'});
+  const confirm = vi.spyOn(provisioning, 'confirm');
+  vi.spyOn(provisioning, 'job').mockResolvedValue({id: 'recovered', state: 'VERIFYING', step: 'INSTALL_ADMITTED',
+    reason_code: null, reconciliation_required: true, retry_allowed: false, events: []});
+  render(<AutomaticSetup />);
+  expect(await screen.findByText('Job: recovered')).toBeInTheDocument();
+  expect(recover).toHaveBeenCalledWith('stable-key');
+  expect(confirm).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', {name: /add another/i})).not.toBeInTheDocument();
+});
+
+it('lets a terminal job clear only its local reference and select another target', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  sessionStorage.setItem('nimbusops.setup.job.v1', 'done');
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: [{id: 'next', hostname: 'next-vm', address: '192.0.2.2'}]});
+  vi.spyOn(provisioning, 'job').mockResolvedValue({id: 'done', state: 'SUCCEEDED', step: 'DONE',
+    reason_code: null, reconciliation_required: false, retry_allowed: false, events: []});
+  render(<AutomaticSetup />);
+  fireEvent.click(await screen.findByRole('button', {name: /add another server/i}));
+  expect(screen.getByLabelText('Authorized target')).toBeInTheDocument();
+  expect(sessionStorage.getItem('nimbusops.setup.job.v1')).toBeNull();
+});
+
+it('stops polling a missing job and provides an explicit local-reference escape', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  const { ApiFailure } = await import('../../api/client');
+  sessionStorage.setItem('nimbusops.setup.job.v1', 'missing');
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: []});
+  vi.spyOn(provisioning, 'job').mockRejectedValue(new ApiFailure('http', 'missing', 404));
+  render(<AutomaticSetup />);
+  fireEvent.click(await screen.findByRole('button', {name: /clear unavailable job reference/i}));
+  expect(screen.getByLabelText('Authorized target')).toBeInTheDocument();
+  expect(screen.getByRole('alert')).toHaveTextContent(/not cancelled|reconcile/i);
 });
 
 it('requires target review and explicit approval before dispatch', async () => {
@@ -32,4 +87,49 @@ it('requires target review and explicit approval before dispatch', async () => {
   await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
   expect(sessionStorage.getItem('nimbusops.setup.job.v1')).toBe('j');
   expect(await screen.findByText(/fresh heartbeat and telemetry verified/i)).toBeInTheDocument();
+});
+
+it('persists intent before dispatch and reuses its key after a lost response', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: [{id: 'target', hostname: 'new-vm', address: '192.0.2.1'}]});
+  vi.spyOn(provisioning, 'preflight').mockResolvedValue({target_id: 'target', validation_id: 'v', approval_hash: 'hash',
+    expires_at: Date.now()+300000, facts: {}, changes: []});
+  vi.spyOn(provisioning, 'recover').mockRejectedValue(new Error('network'));
+  const keys: string[] = [];
+  vi.spyOn(provisioning, 'confirm').mockImplementation(async (_plan, key) => {
+    expect(JSON.parse(sessionStorage.getItem('nimbusops.setup.confirm.v1')!).key).toBe(key);
+    keys.push(key);
+    if (keys.length === 1) throw new Error('response lost');
+    return {id: 'same-job', state: 'VERIFYING'};
+  });
+  vi.spyOn(provisioning, 'job').mockResolvedValue({id: 'same-job', state: 'VERIFYING', step: 'INSTALL_ADMITTED',
+    reason_code: null, reconciliation_required: true, retry_allowed: false, events: []});
+  render(<AutomaticSetup />);
+  fireEvent.change(await screen.findByLabelText('Authorized target'), {target: {value: 'target'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Read-only preflight'}));
+  fireEvent.click(await screen.findByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button', {name: 'Confirm installation'}));
+  const recover = await screen.findByRole('button', {name: 'Recover same confirmation'});
+  await waitFor(() => expect(recover).not.toBeDisabled());
+  fireEvent.click(recover);
+  expect(await screen.findByText('Job: same-job')).toBeInTheDocument();
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(keys[1]);
+  expect(screen.queryByRole('button', {name: /add another/i})).not.toBeInTheDocument();
+});
+
+it('does not dispatch when durable confirmation storage is blocked', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: [{id: 'target', hostname: 'vm', address: '192.0.2.1'}]});
+  vi.spyOn(provisioning, 'preflight').mockResolvedValue({target_id: 'target', validation_id: 'v', approval_hash: 'hash',
+    expires_at: Date.now()+300000, facts: {}, changes: []});
+  const confirm = vi.spyOn(provisioning, 'confirm');
+  render(<AutomaticSetup />);
+  fireEvent.change(await screen.findByLabelText('Authorized target'), {target: {value: 'target'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Read-only preflight'}));
+  fireEvent.click(await screen.findByRole('checkbox'));
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('storage blocked'); });
+  fireEvent.click(screen.getByRole('button', {name: 'Confirm installation'}));
+  expect(await screen.findByRole('alert')).toHaveTextContent(/storage blocked/i);
+  expect(confirm).not.toHaveBeenCalled();
 });

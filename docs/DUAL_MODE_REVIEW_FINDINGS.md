@@ -1,5 +1,10 @@
 # Independent local acceptance review — 2026-11-20
 
+> Historical baseline findings (`f4c1015`). The follow-up reliability sprint
+> implements A/B/C; see `DUAL_MODE_RELIABILITY_ACCEPTANCE.md` for current evidence
+> and review disposition. This history is retained, not a statement that the
+> baseline fixes were already accepted at the time of the original review.
+
 Read-only fresh-context reviewer inspected the complete tracked diff against
 `8203d46` plus new production/tests/policy/docs. No unrelated functional changes
 identified beyond intended UTC carry-forward. No Critical finding identified.

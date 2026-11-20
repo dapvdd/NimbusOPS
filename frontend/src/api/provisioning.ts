@@ -13,8 +13,9 @@ export const provisioning = {
   preflight: (target_id: string) => request<SetupPlan>('/provisioning/preflight', {
     method: 'POST', body: JSON.stringify({target_id}),
   }),
-  confirm: (plan: SetupPlan) => request<{id: string; state: string}>('/provisioning/confirm', {
-    method: 'POST', body: JSON.stringify({target_id: plan.target_id,
+  recover: (key: string) => request<{id: string; state: string}>(`/provisioning/requests/${encodeURIComponent(key)}`),
+  confirm: (plan: SetupPlan, idempotency_key: string) => request<{id: string; state: string}>('/provisioning/confirm', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({idempotency_key, target_id: plan.target_id,
       validation_id: plan.validation_id, approval_hash: plan.approval_hash, confirmed: true}),
   }),
   job: (id: string) => request<SetupJob>(`/provisioning/jobs/${encodeURIComponent(id)}`),

@@ -97,7 +97,7 @@ def require_status_context(db: Session) -> tuple[int, int]:
 # ------------------------------------------------------------- enrollment
 
 
-def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) -> tuple[Host, str]:
+def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False, *, commit: bool = True) -> tuple[Host, str]:
     """Create or re-enroll a host. Returns (host, plaintext_token_once).
 
     Phase 3B (threat T5): the legacy path never un-revokes — a REVOKED host
@@ -107,6 +107,10 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
     the credential; via legacy token it is a plain credential rotation for
     an already-ENROLLED host.
     """
+    from .enrollment import check_onboarding_ownership, normalize_hostname
+    req = req.model_copy(update={"hostname": normalize_hostname(req.hostname)})
+    if not via_bootstrap:
+        check_onboarding_ownership(db, normalize_hostname(req.hostname))
     existing = db.scalar(select(Host).where(Host.hostname == req.hostname))
     if existing is not None:
         if not via_bootstrap:
@@ -143,7 +147,10 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
                 detail="re-enrollment rotated agent token",
             )
         )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         logger.info(
             "enrollment: re-enrolled host hostname=%s via=bootstrap (token rotated)",
             req.hostname,
@@ -181,7 +188,10 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
         )
     )
     try:
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except IntegrityError as exc:
         # Two concurrent first-enrollments for one hostname: the unique index
         # decides the winner. Fail closed rather than creating a second row.

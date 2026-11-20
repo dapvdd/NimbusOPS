@@ -13,7 +13,13 @@ from ..core.db import get_db
 from ..models import Operator
 from ..models.provisioning import ProvisioningEvent, ProvisioningJob
 from ..provisioning.ssh import Target, load_targets, preflight
-from ..services.provisioning import confirm_plan, retry_plan, save_plan
+from ..services.provisioning import (
+    confirmation_hash,
+    confirm_plan,
+    recover_confirmation,
+    retry_plan,
+    save_plan,
+)
 from .operators import require_operator
 
 router = APIRouter(prefix="/api/v1/provisioning")
@@ -78,20 +84,47 @@ class ConfirmRequest(PreflightRequest):
     validation_id: str = Field(min_length=1, max_length=36)
     approval_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     confirmed: Literal[True]
+    idempotency_key: str = Field(
+        min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$"
+    )
 
 
 @router.post("/confirm", status_code=202)
 def confirm(
     req: ConfirmRequest, op: Operator = Depends(admin), db: Session = Depends(get_db)
 ) -> dict[str, str]:
-    target = configured_targets().get(req.target_id)
-    if target is None:
-        raise HTTPException(404, "TARGET_NOT_AUTHORIZED")
     try:
-        job = confirm_plan(db, op.id, target, req.validation_id, req.approval_hash)
+        job = recover_confirmation(
+            db,
+            op.id,
+            req.idempotency_key,
+            confirmation_hash(req.target_id, req.validation_id, req.approval_hash),
+        )
+        if job is None:
+            target = configured_targets().get(req.target_id)
+            if target is None:
+                raise HTTPException(404, "TARGET_NOT_AUTHORIZED")
+            job = confirm_plan(
+                db,
+                op.id,
+                target,
+                req.validation_id,
+                req.approval_hash,
+                idempotency_key=req.idempotency_key,
+            )
     except ValueError:
         db.rollback()
         raise HTTPException(409, "APPROVAL_INVALID_OR_TARGET_RESERVED") from None
+    return {"id": job.id, "state": job.state}
+
+
+@router.get("/requests/{idempotency_key}")
+def recover(
+    idempotency_key: str, op: Operator = Depends(admin), db: Session = Depends(get_db)
+) -> dict[str, str]:
+    job = recover_confirmation(db, op.id, idempotency_key)
+    if job is None:
+        raise HTTPException(404, "JOB_NOT_FOUND")
     return {"id": job.id, "state": job.state}
 
 
@@ -100,7 +133,7 @@ def job_status(
     job_id: str, op: Operator = Depends(admin), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     job = db.get(ProvisioningJob, job_id)
-    if job is None:
+    if job is None or job.requester_id != op.id:
         raise HTTPException(404, "JOB_NOT_FOUND")
     events = db.scalars(
         select(ProvisioningEvent)

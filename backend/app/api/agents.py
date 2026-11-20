@@ -58,9 +58,10 @@ def enroll(req: EnrollRequest, db: Session = Depends(get_db)) -> EnrollResponse:
             token_row = enrollment_service.consume_bootstrap_token(
                 db, req.bootstrap_token, req.hostname, commit=False
             )
-            host, token = host_service.enroll_host(db, req, via_bootstrap=True)
+            host, token = host_service.enroll_host(db, req, via_bootstrap=True, commit=False)
             # Backfill which host consumed the token (id known only after insert).
             token_row.consumed_by = host.id
+            enrollment_service.bind_bootstrap_host(db, token_row, host)
             db.commit()
         except Exception:
             db.rollback()

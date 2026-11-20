@@ -200,8 +200,8 @@ def test_manual_token_conflict_fails_job_without_killing_worker(
     )
     facts = {"hostname": "new-vm"}
     plan = save_plan(db_session, op.id, target, facts)
-    job = confirm_plan(db_session, op.id, target, plan.id, plan.plan_hash)
     issue_bootstrap_token(db_session, op, target.hostname, 600)
+    job = confirm_plan(db_session, op.id, target, plan.id, plan.plan_hash)
     monkeypatch.setattr("backend.app.provisioning.worker.preflight", lambda _: facts)
     run_once(db_session, {"test": target}, "https://demo.example")
     db_session.refresh(job)

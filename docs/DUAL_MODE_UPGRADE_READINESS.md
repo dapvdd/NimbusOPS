@@ -2,6 +2,10 @@
 
 ## Verdict: NO-GO for live upgrade (local acceptance snapshot)
 
+Current reliability follow-up: `DUAL_MODE_RELIABILITY_ACCEPTANCE.md` supersedes
+baseline A/B/C status after local regression verification. Live/real-VM gates
+remain NO-GO; historical acceptance below is scoped to its frozen revision.
+
 Local acceptance resumed without infrastructure on 2026-11-20. See
 `DUAL_MODE_PARTIAL_ACCEPTANCE.md` for current results and commit resolution,
 `DUAL_MODE_REVIEW_FINDINGS.md` for three unresolved Important blockers, and

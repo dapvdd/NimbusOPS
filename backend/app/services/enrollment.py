@@ -9,9 +9,10 @@ one host.
 from __future__ import annotations
 
 import logging
+import json
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import false, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -20,6 +21,7 @@ from ..core.config import get_settings
 from ..core.errors import ApiError
 from ..core.security import generate_agent_token, hash_session_token
 from ..models import BootstrapToken, Host, HostEvent, ProvisioningOwnership
+from ..models.provisioning import ProvisioningJob, ProvisioningTarget
 
 logger = logging.getLogger("nimbusops.enrollment")
 
@@ -52,6 +54,58 @@ def normalize_hostname(hostname: str) -> str:
     return hostname.strip().lower()
 
 
+def check_onboarding_ownership(db: Session, hostname: str, *, job_id: str | None = None,
+                               generation: int | None = None, token_id: str | None = None) -> ProvisioningOwnership | None:
+    hostname = normalize_hostname(hostname)
+    # Acquire SQLite's writer reservation before reading ownership. All competing
+    # confirmation/issue/consume paths use this same database transaction fence.
+    db.execute(update(ProvisioningOwnership).where(false()).values(generation=ProvisioningOwnership.generation))
+    owners = db.scalars(select(ProvisioningOwnership).where(
+        ProvisioningOwnership.disposition.in_(("HELD", "RECONCILING")))).all()
+    for owner in owners:
+        job = db.get(ProvisioningJob, owner.owner_job_id)
+        host = db.get(Host, owner.host_id) if owner.host_id else None
+        plan = json.loads(job.plan_json) if job else {}
+        if (host and host.hostname == hostname) or normalize_hostname(plan.get("hostname", "")) == hostname:
+            worker_match = job is not None and job.id == job_id and owner.generation == generation
+            token_match = (job is not None and token_id is not None
+                           and plan.get("bootstrap_token_id") == token_id
+                           and plan.get("ownership_generation") == owner.generation)
+            if worker_match or token_match:
+                return owner
+            raise ApiError(409, ErrorCode.TARGET_ALREADY_MANAGED, "a provisioning job owns this hostname")
+    if job_id is not None:
+        raise ApiError(409, ErrorCode.TARGET_ALREADY_MANAGED, "provisioning ownership changed")
+    if token_id is not None:
+        for job in db.scalars(select(ProvisioningJob)).all():
+            if json.loads(job.plan_json).get("bootstrap_token_id") == token_id:
+                raise ApiError(409, ErrorCode.TARGET_ALREADY_MANAGED, "provisioning token lost ownership")
+    return None
+
+
+def bind_bootstrap_host(db: Session, token: BootstrapToken, host: Host) -> None:
+    owner = check_onboarding_ownership(db, host.hostname, token_id=token.id)
+    if owner is None:
+        return
+    job = db.get(ProvisioningJob, owner.owner_job_id)
+    assert job is not None
+    target = db.get(ProvisioningTarget, owner.target_id)
+    if (owner.host_id not in (None, host.id) or target is None
+            or target.host_id not in (None, host.id)):
+        raise ApiError(409, ErrorCode.TARGET_ALREADY_MANAGED, "host binding conflicts")
+    result = db.execute(update(ProvisioningOwnership).where(
+        ProvisioningOwnership.target_id == owner.target_id,
+        ProvisioningOwnership.owner_job_id == job.id,
+        ProvisioningOwnership.generation == owner.generation,
+        ProvisioningOwnership.disposition.in_(("HELD", "RECONCILING")),
+    ).values(host_id=host.id))
+    if result.rowcount != 1:
+        raise ApiError(409, ErrorCode.TARGET_ALREADY_MANAGED, "provisioning ownership changed")
+    target.host_id = host.id
+    target.mapping_status = "MAPPED"
+    job.expected_host_id = host.id
+
+
 def issue_bootstrap_token(
     db: Session,
     operator,
@@ -60,6 +114,8 @@ def issue_bootstrap_token(
     *,
     intent: str = "enroll",
     commit: bool = True,
+    provisioning_job_id: str | None = None,
+    ownership_generation: int | None = None,
 ) -> tuple[BootstrapToken, str]:
     """Create a single-use bootstrap token. Returns (row, plaintext_once).
 
@@ -74,6 +130,8 @@ def issue_bootstrap_token(
         raise ApiError(422, ErrorCode.INTERNAL, "hostname must be 1-255 characters")
     if intent not in ("enroll", "reenroll"):
         raise ApiError(422, ErrorCode.INTERNAL, "intent must be 'enroll' or 'reenroll'")
+
+    check_onboarding_ownership(db, hostname, job_id=provisioning_job_id, generation=ownership_generation)
 
     owner = db.scalar(
         select(ProvisioningOwnership)
@@ -172,6 +230,7 @@ def consume_bootstrap_token(db: Session, token: str, hostname: str, commit: bool
     # being rejected early by intent/hostname guards.
     if row.consumed_at is not None:
         raise ApiError(409, ErrorCode.BOOTSTRAP_TOKEN_CONSUMED, "bootstrap token already used")
+    check_onboarding_ownership(db, normalized, token_id=row.id)
     # Intent re-check against CURRENT fleet state (pre-UPDATE: rejection never
     # burns the token). Rows issued before this change default to 'enroll'.
     intent = getattr(row, "intent", None) or "enroll"

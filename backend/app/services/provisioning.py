@@ -6,7 +6,7 @@ import time
 from dataclasses import asdict
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import false, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from ..models.provisioning import (
     ProvisioningEvent,
     ProvisioningJob,
     ProvisioningOwnership,
+    ProvisioningRequest,
     ProvisioningTarget,
     ProvisioningValidation,
 )
@@ -88,10 +89,50 @@ def save_plan(
     return plan
 
 
+def confirmation_hash(target_id: str, validation_id: str, approval_hash: str) -> str:
+    return hashlib.sha256(
+        json.dumps([target_id, validation_id, approval_hash]).encode()
+    ).hexdigest()
+
+
+def recover_confirmation(
+    db: Session, actor_id: str, key: str, request_hash: str | None = None
+) -> ProvisioningJob | None:
+    request = db.get(ProvisioningRequest, (actor_id, "ssh-confirm", key))
+    if request is None:
+        return None
+    if request_hash is not None and request.request_hash != request_hash:
+        raise ValueError("IDEMPOTENCY_KEY_CONFLICT")
+    job = db.get(ProvisioningJob, request.job_id)
+    if job is None or job.requester_id != actor_id:
+        raise ValueError("JOB_NOT_FOUND")
+    return job
+
+
 def confirm_plan(
-    db: Session, actor_id: str, target: Target, validation_id: str, approval_hash: str
+    db: Session,
+    actor_id: str,
+    target: Target,
+    validation_id: str,
+    approval_hash: str,
+    *,
+    idempotency_key: str | None = None,
 ) -> ProvisioningJob:
     """One-shot approval and exclusive target reservation in one transaction."""
+    digest = confirmation_hash(target.id, validation_id, approval_hash)
+    if idempotency_key is not None:
+        recovered = recover_confirmation(db, actor_id, idempotency_key, digest)
+        if recovered is not None:
+            return recovered
+    db.execute(
+        update(ProvisioningOwnership)
+        .where(false())
+        .values(generation=ProvisioningOwnership.generation)
+    )
+    if idempotency_key is not None:
+        recovered = recover_confirmation(db, actor_id, idempotency_key, digest)
+        if recovered is not None:
+            return recovered
     plan = db.get(ProvisioningValidation, validation_id)
     if (
         plan is None
@@ -106,6 +147,13 @@ def confirm_plan(
     if db.scalar(select(Host).where(Host.hostname == target.hostname)):
         raise ValueError("EXISTING_HOST_IDENTITY")
     job_id = str(uuid4())
+    from .enrollment import check_onboarding_ownership, normalize_hostname
+    from ..core.errors import ApiError
+
+    try:
+        check_onboarding_ownership(db, normalize_hostname(target.hostname))
+    except ApiError:
+        raise ValueError("TARGET_ALREADY_RESERVED") from None
     claimed = db.execute(
         update(ProvisioningValidation)
         .where(
@@ -117,6 +165,10 @@ def confirm_plan(
     )
     if claimed.rowcount != 1:
         db.rollback()
+        if idempotency_key is not None:
+            recovered = recover_confirmation(db, actor_id, idempotency_key, digest)
+            if recovered is not None:
+                return recovered
         raise ValueError("APPROVAL_ALREADY_CONSUMED")
     stamp = now_ms()
     job = ProvisioningJob(
@@ -134,6 +186,16 @@ def confirm_plan(
         updated_at=stamp,
     )
     db.add(job)
+    if idempotency_key is not None:
+        db.add(
+            ProvisioningRequest(
+                actor_id=actor_id,
+                route_scope="ssh-confirm",
+                idempotency_key=idempotency_key,
+                request_hash=digest,
+                job_id=job_id,
+            )
+        )
     ownership = db.get(ProvisioningOwnership, target.id)
     if ownership is None:
         db.add(
@@ -174,6 +236,10 @@ def confirm_plan(
         db.commit()
     except IntegrityError:
         db.rollback()
+        if idempotency_key is not None:
+            recovered = recover_confirmation(db, actor_id, idempotency_key, digest)
+            if recovered is not None:
+                return recovered
         raise ValueError("TARGET_ALREADY_RESERVED") from None
     return job
 
@@ -186,6 +252,7 @@ def retry_plan(db: Session, job_id: str, actor_id: str) -> str:
     job = db.get(ProvisioningJob, job_id)
     if (
         job is None
+        or job.requester_id != actor_id
         or job.state != "FAILED"
         or job.reconciliation_required
         or job.step != "REVALIDATE"
