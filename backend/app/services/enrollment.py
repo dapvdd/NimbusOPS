@@ -59,6 +59,7 @@ def issue_bootstrap_token(
     expires_in_seconds: int = 600,
     *,
     intent: str = "enroll",
+    commit: bool = True,
 ) -> tuple[BootstrapToken, str]:
     """Create a single-use bootstrap token. Returns (row, plaintext_once).
 
@@ -125,7 +126,8 @@ def issue_bootstrap_token(
             "an active bootstrap token already exists for this hostname; revoke it or wait for expiry",
         )
     record_host_event(db, None, "BOOTSTRAP_ISSUED", actor=operator.username, detail=f"hostname={hostname} ttl={ttl}s intent={intent}")
-    db.commit()
+    if commit:
+        db.commit()
     logger.info("bootstrap: issued token id=%s hostname=%s ttl=%ss intent=%s", row.id, hostname, ttl, intent)
     return row, token
 

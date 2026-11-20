@@ -10,7 +10,7 @@ import logging
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import agents, applications, bootstrap_tokens, host_lifecycle, operators, public
+from .api import agents, applications, bootstrap_tokens, host_lifecycle, operators, public, provisioning
 from .core.config import get_settings
 from .core.db import create_all, session_scope
 from .core.errors import install_error_handlers
@@ -76,6 +76,7 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+    app.include_router(provisioning.router)
 
     app.add_middleware(
         CORSMiddleware,

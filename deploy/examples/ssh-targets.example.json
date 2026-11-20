@@ -1,0 +1,11 @@
+{
+  "disposable-ubuntu-test": {
+    "address": "192.0.2.10",
+    "port": 22,
+    "username": "nimbusops-installer",
+    "hostname": "disposable-ubuntu-test",
+    "machine_id": "00000000000000000000000000000000",
+    "identity_file": "/run/nimbusops-secrets/disposable-short-lived-key",
+    "known_hosts": "/etc/nimbusops-provisioning/known_hosts"
+  }
+}

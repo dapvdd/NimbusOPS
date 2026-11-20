@@ -86,7 +86,7 @@ function assertNotSimulated(path: string, init?: RequestInit): void {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   assertNotSimulated(path, init);
   let resp: Response;
   try {

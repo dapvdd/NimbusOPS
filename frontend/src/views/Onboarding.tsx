@@ -12,10 +12,23 @@ import { Field } from "../ui/Field";
 import { InlineAlert } from "../ui/InlineAlert";
 import { StatusBadge } from "../ui/StatusBadge";
 import { Tabs } from "../ui/Tabs";
+import AutomaticSetup from './AutomaticSetup';
 
 type WizardStep = "host" | "mode" | "token" | "install" | "verify";
 
 export default function Onboarding() {
+  const [method, setMethod] = useState<'automatic' | 'manual'>('automatic');
+  return <div className="space-y-6">
+    <h1 className="text-3xl font-semibold">Add Server</h1>
+    <nav aria-label="Setup method" className="flex gap-3">
+      <Button aria-pressed={method === 'automatic'} onClick={() => setMethod('automatic')}>Automatic Setup (recommended)</Button>
+      <Button aria-pressed={method === 'manual'} onClick={() => setMethod('manual')}>Manual Bootstrap</Button>
+    </nav>
+    {method === 'automatic' ? <AutomaticSetup /> : <ManualOnboarding />}
+  </div>;
+}
+
+export function ManualOnboarding() {
   const navigate = useNavigate();
 
   const [step, setStep] = useState<WizardStep>("host");
