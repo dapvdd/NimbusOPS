@@ -29,7 +29,7 @@ from .config import (
     save_identity,
 )
 from .telemetry import collect_telemetry, host_info_snapshot
-from .worker import CommandWorker, SenderCommandAdapter
+from .worker import CommandWorker, FileOutcomeStore, SenderCommandAdapter
 
 logger = logging.getLogger("nimbusops.agent")
 
@@ -293,7 +293,14 @@ def run(cfg: Config) -> int:
     if not cfg.telemetry_only:
         from .docker_exec import DockerExecutor
 
-        worker = CommandWorker(http=SenderCommandAdapter(sender), executor=DockerExecutor())
+        # Pending operation outcomes survive restarts in a journal beside the
+        # identity file. Telemetry-only agents never create a worker or journal.
+        journal = cfg.state_file.with_name("pending-results.json")
+        worker = CommandWorker(
+            http=SenderCommandAdapter(sender),
+            executor=DockerExecutor(),
+            outcome_store=FileOutcomeStore(journal),
+        )
     logger.info(
         "agent %s started: server=%s interval=%.1fs state=%s",
         __version__, cfg.server_url, cfg.interval, cfg.state_file,

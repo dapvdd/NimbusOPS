@@ -17,6 +17,7 @@ import pytest
 from backend.tests.conftest import auth_headers  # noqa: F401  (enables env)
 
 from agent.nimbusops_agent.client import Sender
+from agent.nimbusops_agent.config import collect_host_info
 from agent.nimbusops_agent.worker import CommandWorker, SenderCommandAdapter, WorkerOutcome
 
 import os
@@ -171,6 +172,19 @@ def enable_docker(server, host_id: str, headers: dict) -> None:
         return e.code, json.loads(e.read().decode())
 
 
+def authorized_sender(host_id: str, token: str) -> Sender:
+    """Real Sender after the heartbeat that supplies docker_enabled.
+
+    The production agent sends a heartbeat before every command poll; the
+    worker's fail-closed guard relies on that flag. Mirroring the real cycle
+    keeps these integration tests faithful after the authorization fix.
+    """
+    sender = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
+    ok, detail = sender.send_heartbeat(collect_host_info())
+    assert ok, detail
+    return sender
+
+
 def test_full_deploy_flow_real_agent_real_backend(server, identity):
     """Dashboard-equivalent flow: login, enable Docker, deploy -> poll -> result -> state."""
     host_id, token = identity
@@ -184,7 +198,7 @@ def test_full_deploy_flow_real_agent_real_backend(server, identity):
     assert body["status"] == "QUEUED"
 
     # 2. Real agent Sender + CommandWorker claims and executes (mocked Docker).
-    sender = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
+    sender = authorized_sender(host_id, token)
     ex = MockDockerExecutor()
     worker = CommandWorker(http=SenderCommandAdapter(sender), executor=ex)
     try:
@@ -220,7 +234,7 @@ def test_full_stop_start_flow_real_agent_real_backend(server, identity):
     dep_id = body["deployment_id"]
     op_id = body["operation_id"]
 
-    sender = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
+    sender = authorized_sender(host_id, token)
     ex = MockDockerExecutor()
     worker = CommandWorker(http=SenderCommandAdapter(sender), executor=ex)
     try:
@@ -234,7 +248,7 @@ def test_full_stop_start_flow_real_agent_real_backend(server, identity):
     stop_op = stop_body["operation_id"]
 
     # STOP outcome: container EXITED, http probe not applicable.
-    sender = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
+    sender = authorized_sender(host_id, token)
     ex2 = MockDockerExecutor(
         outcome={"status": "SUCCEEDED", "result": {"container_state": "EXITED", "http_ok": None}}
     )
@@ -253,7 +267,7 @@ def test_full_stop_start_flow_real_agent_real_backend(server, identity):
     status, start_body = http_post(f"/api/v1/applications/{dep_id}/start", None, headers=hdrs)
     assert status == 202
     start_op = start_body["operation_id"]
-    sender = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
+    sender = authorized_sender(host_id, token)
     ex3 = MockDockerExecutor()
     worker3 = CommandWorker(http=SenderCommandAdapter(sender), executor=ex3)
     try:
@@ -276,7 +290,7 @@ def test_duplicate_deploy_single_execution(server, identity):
     assert s1 == 202 and s2 == 202
     assert b1["operation_id"] == b2["operation_id"]
 
-    sender = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
+    sender = authorized_sender(host_id, token)
     ex = MockDockerExecutor()
     worker = CommandWorker(http=SenderCommandAdapter(sender), executor=ex)
     try:
@@ -293,6 +307,10 @@ def test_duplicate_deploy_single_execution(server, identity):
             self.inner = SenderCommandAdapter(inner)
             self.cmd = cmd
 
+        @property
+        def docker_enabled(self):
+            return self.inner.docker_enabled
+
         def poll(self):
             if self.cmd is not None:
                 c = self.cmd
@@ -308,7 +326,7 @@ def test_duplicate_deploy_single_execution(server, identity):
            "completed_at": None, "result": None, "error_code": None, "error_message": None,
            "template": {"key": "nginx-demo", "image": "nginx:1.27-alpine", "container_port": 80,
                         "host_port": 18080, "container_name": b1["container_name"]}}
-    sender2 = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
+    sender2 = authorized_sender(host_id, token)
     ex2 = MockDockerExecutor()
     try:
         rdw = CommandWorker(http=ReDeliverHttp(sender2, cmd), executor=ex2)
@@ -337,7 +355,7 @@ def test_host_disconnect_during_operation_recoverable(server, identity):
     op_id = body["operation_id"]
 
     # Agent polls (claims) then "dies" (no result).
-    sender = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
+    sender = authorized_sender(host_id, token)
     try:
         sender.poll_commands()
     finally:
@@ -348,7 +366,7 @@ def test_host_disconnect_during_operation_recoverable(server, identity):
     assert op["status"] == "RUNNING"  # honest: claimed, outcome unknown
 
     # Reconnected agent polls again: op NOT re-delivered (RUNNING, not QUEUED).
-    sender2 = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
+    sender2 = authorized_sender(host_id, token)
     ex = MockDockerExecutor()
     worker = CommandWorker(http=SenderCommandAdapter(sender2), executor=ex)
     try:
@@ -366,7 +384,7 @@ def test_failed_operation_recorded_with_error_details(server, identity):
     _, body = http_post("/api/v1/applications/deploy", deploy_request(host_id), headers=hdrs)
     op_id = body["operation_id"]
 
-    sender = Sender(server_url=BASE_URL, host_id=host_id, agent_token=token)
+    sender = authorized_sender(host_id, token)
     ex = MockDockerExecutor(
         outcome={
             "status": "FAILED",
