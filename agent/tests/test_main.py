@@ -70,6 +70,19 @@ def test_ensure_enrolled_failure_propagates(tmp_path, monkeypatch):
         ensure_enrolled(_cfg(tmp_path))
 
 
+def test_dashboard_hostname_overrides_socket_hostname(tmp_path, monkeypatch):
+    def handler(request):
+        assert json.loads(request.content)["hostname"] == "demo.example.org"
+        return httpx.Response(200, json={"host_id": "h-demo", "agent_token": "secret"})
+
+    monkeypatch.setattr(agent_main, "Sender", _sender_factory(handler, []))
+    monkeypatch.setattr(agent_main.socket, "gethostname", lambda: "ubuntu-short")
+    cfg = Config(server_url="http://test", enrollment_token="", bootstrap_token="disposable",
+                 hostname="demo.example.org", state_file=tmp_path / "identity.json")
+    identity, created = ensure_enrolled(cfg)
+    assert created and identity.host_id == "h-demo"
+
+
 def test_run_exits_code3_when_credentials_rejected(tmp_path, monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": {"code": "UNAUTHORIZED", "message": "no"}})

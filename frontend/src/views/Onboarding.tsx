@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiFailure } from "../api/client";
 import type { Host } from "../api/types";
-import { installCommands } from "../lib/agentCommands";
+import { installCommands, verifiedInstallCommand } from "../lib/agentCommands";
 import { guidanceFor } from "../lib/errorGuidance";
 import { enrollmentProof, findHostByHostname } from "../lib/onboarding";
 import { Button } from "../ui/Button";
@@ -30,6 +30,7 @@ export default function Onboarding() {
   // Token issuance state
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState<ApiFailure | Error | null>(null);
+  const [reenrolling, setReenrolling] = useState(false);
   const [tokenData, setTokenData] = useState<{
     id: string;
     token: string;
@@ -127,6 +128,26 @@ export default function Onboarding() {
   };
 
   // Handle Step 2 submit -> generate real token
+  const handleConfirmedReenroll = async () => {
+    if (!existingHost) return;
+    setIssuing(true);
+    setIssueError(null);
+    try {
+      const result = await api.reenrollHost(existingHost.id);
+      const list = await api.listBootstrapTokens({ active: true });
+      const issued = list.tokens.find(t => t.hostname.toLowerCase() === existingHost.hostname.toLowerCase());
+      if (!issued) throw new Error("Token issued but lookup failed. Revoke it before retrying.");
+      setTokenData({ id: issued.id, token: result.bootstrap_token, expires_at: result.expires_at });
+      setReenrolling(true);
+      setMode("telemetry-only");
+      setStep("token");
+    } catch (err) {
+      setIssueError(err instanceof Error ? err : new Error(String(err)));
+    } finally {
+      setIssuing(false);
+    }
+  };
+
   const handleGenerateToken = async () => {
     setIssuing(true);
     setIssueError(null);
@@ -173,7 +194,11 @@ export default function Onboarding() {
     }
   };
 
-  const commands = installCommands(window.location.origin, "/var/lib/nimbusops-agent", mode);
+  const legacyCommands = installCommands(window.location.origin, "/var/lib/nimbusops-agent", mode);
+  const verified = verifiedInstallCommand(window.location.origin, hostname.trim(), reenrolling);
+  const commands = mode === "telemetry-only"
+    ? { promptToFile: verified, systemdTab: "# The verified installer above enrolls and starts the service. Do not run it twice.", foregroundTab: "# For diagnostics: sudo journalctl -u nimbusops-agent -n 50 --no-pager" }
+    : legacyCommands;
 
   return (
     <div className="mx-auto max-w-3xl space-y-8 py-6">
@@ -284,19 +309,16 @@ export default function Onboarding() {
                     >
                       Open host
                     </Link>
-                    <Link
-                      to={`/servers/${existingHost.id}`}
-                      className="text-xs font-semibold text-signal-info hover:underline"
-                    >
-                      Re-enroll
-                    </Link>
+                    {existingHost.is_revoked && <Button type="button" disabled={issuing} onClick={() => void handleConfirmedReenroll()}>Confirm re-enroll</Button>}
                   </div>
                 }
               >
                 A host named <strong className="font-mono">{existingHost.hostname}</strong> is already registered.
-                To replace its credentials, re-enroll from the host's detail view instead of creating a duplicate.
+                Confirm re-enrollment only for a removed/revoked host. This issues a new single-use credential for the same host identity.
               </InlineAlert>
             )}
+
+            {issueError && <InlineAlert variant="bad" title="Re-enrollment failed">{issueError.message}</InlineAlert>}
 
             <div className="flex justify-end gap-3 pt-2">
               <Button
@@ -479,7 +501,7 @@ export default function Onboarding() {
           <div className="space-y-4">
             <div>
               <h3 className="text-xs font-semibold text-ink-200 uppercase tracking-wider mb-2">
-                Step A: Write Token (Prompt-to-File)
+                Step A: Verified Install (Prompt-to-File)
               </h3>
               <p className="text-xs text-ink-300 mb-2">
                 Paste this command into your host shell. You will be prompted to paste your bootstrap token securely.

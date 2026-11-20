@@ -15,6 +15,20 @@ afterEach(() => {
 });
 
 describe("Onboarding wizard", () => {
+  it("requires explicit confirmation before re-enroll issuance", async () => {
+    const { api } = await import("../../api/client");
+    vi.spyOn(api, "listHosts").mockResolvedValue({ hosts: [{ id: "h-revoked", hostname: "demo.example.org", status: "OFFLINE", is_revoked: true }], total: 1 } as any);
+    vi.spyOn(api, "listBootstrapTokens").mockResolvedValue({ tokens: [{ id: "bt-re", hostname: "demo.example.org" }] } as any);
+    const issue = vi.spyOn(api, "reenrollHost").mockResolvedValue({ bootstrap_token: "disposable", expires_at: new Date(Date.now() + 600000).toISOString() } as any);
+    render(<MemoryRouter><Onboarding /></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText(/hostname/i), { target: { value: "demo.example.org" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await screen.findByText(/already exists in your fleet/i);
+    expect(issue).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /confirm re-enroll/i }));
+    await waitFor(() => expect(issue).toHaveBeenCalledWith("h-revoked"));
+    expect(await screen.findByText("disposable")).toBeInTheDocument();
+  });
   it("duplicate hostname at step 1 warns and provides open host / re-enroll paths", async () => {
     vi.stubGlobal(
       "fetch",

@@ -51,6 +51,7 @@ def run_reenroll(
     token: str,
     server_url: str,
     agent_mode: str | None,
+    hostname: str | None = None,
 ) -> int:
     """Task 2.1: one-shot re-enroll.
 
@@ -73,7 +74,7 @@ def run_reenroll(
     )
     try:
         ok, result = sender.enroll(
-            hostname=socket.gethostname(),
+            hostname=hostname or socket.gethostname(),
             bootstrap_token=token,
             info={"agent_mode": agent_mode} if agent_mode else {},
         )
@@ -226,7 +227,7 @@ def ensure_enrolled(cfg: Config) -> tuple[Identity, bool]:
     )
     try:
         ok, result = sender.enroll(
-            hostname=socket.gethostname(),
+            hostname=cfg.hostname or socket.gethostname(),
             enrollment_token=cfg.enrollment_token,
             bootstrap_token=cfg.bootstrap_token or None,
             info=collect_host_info(cfg),
@@ -328,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="nimbusops-agent", description="NimbusOps host agent")
     parser.add_argument("--server-url", default=None, help="Control server base URL")
+    parser.add_argument("--hostname", default=None, help="Exact dashboard-selected enrollment hostname")
     parser.add_argument("--enrollment-token", default=None, help="Legacy shared token for initial enrollment")
     parser.add_argument(
         "--bootstrap-token-file",
@@ -373,6 +375,7 @@ def main(argv: list[str] | None = None) -> int:
             server_url=args.server_url or os.environ.get("NIMBUSOPS_AGENT_SERVER_URL", DEFAULT_SERVER_URL),
             enrollment_token=args.enrollment_token or os.environ.get("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", ""),
             bootstrap_token=bootstrap_token,
+            hostname=args.hostname or os.environ.get("NIMBUSOPS_AGENT_HOSTNAME") or None,
             interval=float(args.interval or os.environ.get("NIMBUSOPS_AGENT_INTERVAL", DEFAULT_INTERVAL)),
             state_file=pathlib.Path(
                 args.state_file or os.environ.get("NIMBUSOPS_AGENT_STATE_FILE", str(pathlib.Path.home() / ".nimbusops" / "agent.json"))
@@ -392,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
             token=cfg.bootstrap_token,
             server_url=cfg.server_url,
             agent_mode=agent_mode,
+            hostname=cfg.hostname,
         )
 
     if args.apply_credential_file:

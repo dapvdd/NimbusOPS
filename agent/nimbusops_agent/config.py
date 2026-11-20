@@ -48,6 +48,7 @@ class Config:
     # S4-3: operator-set classification hint. None by default (field omitted
     # from the enroll payload); validated against the server-side literal.
     environment: str | None = None
+    hostname: str | None = None
 
     def __post_init__(self) -> None:
         if not self.server_url:
