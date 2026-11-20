@@ -1,6 +1,6 @@
 """Pydantic schemas: agent (request) and public (response) contracts."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -117,6 +117,14 @@ class LatestMetrics(BaseModel):
     disk_total_bytes: int
     disk_used_percent: float
 
+    @field_validator("recorded_at")
+    @classmethod
+    def normalize_recorded_at(cls, value: datetime) -> datetime:
+        """Restore the UTC timezone SQLite drops on persisted telemetry."""
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
 
 MetricsPoint = LatestMetrics  # Same shape on history endpoints.
 
@@ -151,6 +159,22 @@ class HostOut(BaseModel):
     credential_version: int
     # Null unless a rotation grace window is ACTIVE (hash set AND expires_at > now).
     credential_grace_until: datetime | None
+
+    @field_validator(
+        "boot_time",
+        "enrolled_at",
+        "last_seen_at",
+        "last_telemetry_at",
+        "credential_grace_until",
+    )
+    @classmethod
+    def normalize_host_timestamp(cls, value: datetime | None) -> datetime | None:
+        """Expose persisted UTC instants unambiguously to browser clients."""
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 class HostEventOut(BaseModel):
@@ -346,6 +370,7 @@ class LoginResponse(BaseModel):
     session_token: str
     operator_id: str
     role: Literal["ADMIN", "VIEWER"]
+
     expires_at: datetime
 
 
@@ -353,4 +378,3 @@ class MeResponse(BaseModel):
     operator_id: str
     username: str
     role: Literal["ADMIN", "VIEWER"]
-
