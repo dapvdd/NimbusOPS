@@ -18,6 +18,9 @@ class FakeHttp:
         self.poll_calls = 0
         self.result_calls = []
         self.fail_next_polls = 0
+        # New contract: dispatch authorization is explicit; tests that exercise
+        # execution must opt in, matching the real Sender-derived flag.
+        self.docker_enabled = True
 
     def poll(self) -> dict:
         self.poll_calls += 1

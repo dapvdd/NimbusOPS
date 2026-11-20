@@ -80,7 +80,7 @@ def test_default_host_port_matches_template_catalog():
     assert result["status"] == "SUCCEEDED", result
     run_call = next(c for c in ex._runner.calls if c[:2] == ["docker", "run"])  # type: ignore[attr-defined]
     assert "-p" in run_call
-    assert run_call[run_call.index("-p") + 1].startswith("18080:")
+    assert run_call[run_call.index("-p") + 1] == "127.0.0.1:18080:80"
 
 
 def test_docker_unavailable_raises(monkeypatch):

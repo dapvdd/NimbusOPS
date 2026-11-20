@@ -34,6 +34,13 @@ LABEL_DEPLOYMENT = "nimbusops.deployment"
 # Approved images the agent will run, double-checking upstream approval.
 APPROVED_IMAGES = {"nginx:1.27-alpine"}
 
+# Deployment safety ceilings (fixed argv; never operator-tunable via payload).
+CPU_LIMIT = "0.25"
+MEMORY_LIMIT = "128m"
+MEMORY_SWAP_LIMIT = "128m"
+PIDS_LIMIT = "64"
+PUBLISH_HOST = "127.0.0.1"
+
 DEFAULT_TIMEOUT = 120.0
 
 
@@ -266,15 +273,21 @@ class DockerExecutor:
                 "error_message": f"pull failed: {err.strip()[:300]}",
             }
 
-        # 2. Run: detached, deterministic name, labels, published port,
-        #    NO privileged, NO volumes/mounts, NO extra capabilities.
+        # 2. Run: detached, deterministic name, labels, hard resource ceilings,
+        #    loopback-only publish, NO privileged, NO host network, NO mounts.
+        #    All values are fixed here — never interpolated from the payload
+        #    beyond the validated numeric port/name/deployment id.
         run_argv = [
             "docker", "run", "-d",
             "--name", name,
             "--label", LABEL_MANAGED,
             "--label", f"{LABEL_DEPLOYMENT}={deployment_id}",
             "--restart", "no",
-            "-p", f"{host_port}:{int(template.get('container_port', 80))}",
+            f"--cpus={CPU_LIMIT}",
+            f"--memory={MEMORY_LIMIT}",
+            f"--memory-swap={MEMORY_SWAP_LIMIT}",
+            f"--pids-limit={PIDS_LIMIT}",
+            "-p", f"{PUBLISH_HOST}:{host_port}:{int(template.get('container_port', 80))}",
             image,
         ]
         code, _, err = self._run(run_argv)
