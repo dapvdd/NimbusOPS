@@ -123,6 +123,8 @@ def enroll_host(db: Session, req: EnrollRequest, via_bootstrap: bool = False) ->
         # raised 409 above, so the legacy re-enroll spellings are gone.
         token = generate_agent_token()
         existing.agent_token_hash = hash_token(token)
+        existing.previous_token_hash = None
+        existing.previous_token_expires_at = None
         existing.is_revoked = False
         existing.revoked_at = None
         existing.enrollment_status = "ENROLLED"

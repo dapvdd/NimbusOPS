@@ -4,7 +4,7 @@ import { api, ApiFailure } from "../api/client";
 import type { Host } from "../api/types";
 import { installCommands } from "../lib/agentCommands";
 import { guidanceFor } from "../lib/errorGuidance";
-import { findHostByHostname } from "../lib/onboarding";
+import { enrollmentProof, findHostByHostname } from "../lib/onboarding";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { CopyField } from "../ui/CopyField";
@@ -38,6 +38,7 @@ export default function Onboarding() {
 
   // Polling verify state
   const [hostRecord, setHostRecord] = useState<Host | null>(null);
+  const [onboardingReady, setOnboardingReady] = useState(false);
   const [tokenConsumed, setTokenConsumed] = useState(false);
   const [tokenExpired, setTokenExpired] = useState(false);
   const [polling, setPolling] = useState(false);
@@ -73,10 +74,9 @@ export default function Onboarding() {
           }
         }
 
-        const foundHost = findHostByHostname(hostRes.hosts, hostname);
-        if (foundHost) {
-          setHostRecord(foundHost);
-        }
+        const proof = enrollmentProof(currentToken, hostRes.hosts);
+        setHostRecord(proof.host);
+        setOnboardingReady(proof.ready);
       } catch {
         // Network blips during poll are ignored
       } finally {
@@ -586,8 +586,8 @@ export default function Onboarding() {
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-ink-200">4. Telemetry heartbeat</span>
-              <span className={hostRecord?.latest_metrics ? "text-signal-good font-semibold" : "text-ink-400"}>
-                {hostRecord?.latest_metrics ? "Active" : "Awaiting first heartbeat…"}
+              <span className={onboardingReady ? "text-signal-good font-semibold" : "text-ink-400"}>
+                {onboardingReady ? "Active" : "Awaiting fresh heartbeat and telemetry…"}
               </span>
             </div>
           </div>
@@ -620,12 +620,11 @@ export default function Onboarding() {
                     api.listBootstrapTokens({ limit: 50 }),
                     api.listHosts(),
                   ]);
-                  if (tokenData) {
-                    const ct = tokenRes.tokens.find((t) => t.id === tokenData.id);
-                    if (ct?.consumed_at) setTokenConsumed(true);
-                  }
-                  const fh = findHostByHostname(hostRes.hosts, hostname);
-                  if (fh) setHostRecord(fh);
+                  const ct = tokenRes.tokens.find((t) => t.id === tokenData?.id);
+                  setTokenConsumed(!!ct?.consumed_at);
+                  const proof = enrollmentProof(ct, hostRes.hosts);
+                  setHostRecord(proof.host);
+                  setOnboardingReady(proof.ready);
                 } catch {
                   // A failed manual refresh keeps the previous state; polling
                   // continues and the last-read values stay visible.
@@ -641,7 +640,7 @@ export default function Onboarding() {
             <Button
               type="button"
               variant="primary"
-              disabled={!hostRecord}
+              disabled={!onboardingReady}
               onClick={() => {
                 if (hostRecord) {
                   navigate(`/servers/${hostRecord.id}`);

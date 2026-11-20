@@ -1,4 +1,31 @@
-import type { Host } from "../api/types";
+import type { BootstrapTokenInfo, Host } from "../api/types";
+
+function utcTimestamp(value: string | null | undefined): number {
+  if (!value) return NaN;
+  // SQLite can return persisted UTC datetimes without an offset.
+  return Date.parse(/(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`);
+}
+
+export function enrollmentProof(
+  token: BootstrapTokenInfo | undefined,
+  hosts: Host[],
+  now = Date.now(),
+): { host: Host | null; ready: boolean } {
+  const host = token?.consumed_at && token.consumed_by_host_id
+    ? hosts.find((h) => h.id === token.consumed_by_host_id) ?? null
+    : null;
+  const consumed = utcTimestamp(token?.consumed_at);
+  const fresh = (value: string | null | undefined) => {
+    const time = utcTimestamp(value);
+    return Number.isFinite(time) && time >= consumed && time <= now && now - time <= 90_000;
+  };
+  return {
+    host,
+    ready: !!host && !host.is_revoked && host.enrollment_status !== "REVOKED"
+      && host.status === "ONLINE" && fresh(host.last_seen_at)
+      && fresh(host.last_telemetry_at) && fresh(host.latest_metrics?.recorded_at),
+  };
+}
 
 export type OnboardingState = "WAITING" | "EXPIRED" | "CONSUMED" | "REVOKED";
 

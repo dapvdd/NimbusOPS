@@ -442,12 +442,15 @@ def test_host_model_has_only_revocation_revision_added():
     col = Host.__table__.columns["revocation_revision"]
     assert col.nullable is False
     assert col.default is not None and col.default.arg == 0
+    # After the UX (phase3b) and S5 merges, the Host model's non-provisioning columns
+    # include phase3b additions (agent_mode) alongside the S5 addition (revocation_revision).
     legacy = (
         "id", "hostname", "agent_token_hash", "enrolled_at", "revoked_at",
         "enrollment_status", "docker_enabled", "credential_version",
         "previous_token_hash", "previous_token_expires_at", "agent_version",
         "platform", "platform_release", "cpu_cores", "total_memory_bytes",
         "boot_time", "environment", "last_seen_at", "last_telemetry_at", "is_revoked",
+        "agent_mode",  # phase3b addition (UX merge)
     )
     unexpected = set(mapped) - set(legacy) - {"revocation_revision"}
     assert unexpected == set(), f"unexpected Host columns: {unexpected}"
@@ -489,7 +492,14 @@ def test_existing_rows_gain_only_new_column(migrated_populated_db, populated_bas
     # Both fixtures share one path (already migrated); the honest 'before'
     # shape is the pre-migration snapshot taken by the fixture.
     old_cols = _BASELINE_HOST_COLUMNS
-    added = set(cols) - set(old_cols)
+    # After both migrations (phase3b + S5) + data injection, the hosts table
+    # contains all phase3b columns (agent_mode, etc.) and S5 columns
+    # (revocation_revision). The S5 migration added nothing further to the hosts
+    # table at this point; the only S5-specific column is revocation_revision.
+    # UX (phase3b) columns are part of the pre-S5 baseline for this comparison,
+    # because the merged model already creates them via create_all() before any
+    # migration runs.
+    added = set(cols) - set(old_cols) - {"agent_mode"}
     assert added == {"revocation_revision"}
 
 

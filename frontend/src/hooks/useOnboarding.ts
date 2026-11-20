@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api, ApiFailure } from "../api/client";
 import type { BootstrapTokenInfo, Host } from "../api/types";
-import { deriveOnboardingState, findHostByHostname, type OnboardingState } from "../lib/onboarding";
+import { deriveOnboardingState, enrollmentProof, type OnboardingState } from "../lib/onboarding";
 
 export interface UseOnboardingOptions {
   hostname?: string;
@@ -47,11 +47,7 @@ export function useOnboarding({
         );
       }
 
-      let matchedHost: Host | undefined;
-      const targetHostname = hostname || matchedToken?.hostname;
-      if (targetHostname) {
-        matchedHost = findHostByHostname(hostRes.hosts, targetHostname);
-      }
+      const matchedHost = enrollmentProof(matchedToken, hostRes.hosts).host;
 
       setToken(matchedToken || null);
       setHost(matchedHost || null);

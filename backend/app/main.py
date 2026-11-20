@@ -29,6 +29,11 @@ async def lifespan(_: FastAPI):
     from .core.migrations import upgrade_phase3b
 
     upgrade_phase3b()
+    # Sprint 5: additive zero-touch provisioning schema. Must run AFTER phase3b
+    # so revocation_revision column is present when host-row migrations run.
+    from .core.migrations import run_sprint5_migrations
+
+    run_sprint5_migrations()
     # Seed the approved deployment-template catalog (idempotent).
     from .services.deployments import seed_templates
 

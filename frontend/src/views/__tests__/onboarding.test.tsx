@@ -237,8 +237,10 @@ describe("Onboarding wizard", () => {
     expect(await screen.findByText("bstrp_reissued_token_999")).toBeInTheDocument();
   });
 
-  it("verify step disables continue button until host exists", async () => {
+  it("verify step requires the consumed host and fresh telemetry", async () => {
     let hostRegistered = false;
+    const consumedAt = new Date(Date.now() - 10_000).toISOString();
+    const observedAt = new Date().toISOString();
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string, init?: RequestInit) => {
@@ -249,7 +251,10 @@ describe("Onboarding wizard", () => {
             status: 200,
             json: async () => ({
               hosts: hostRegistered
-                ? [{ id: "h-ready-1", hostname: "ready-server", status: "ONLINE", latest_metrics: { cpu_percent: 10 } }]
+                ? [{ id: "h-ready-1", hostname: "ready-server", status: "ONLINE",
+                    is_revoked: false, enrollment_status: "ENROLLED",
+                    last_seen_at: observedAt, last_telemetry_at: observedAt,
+                    latest_metrics: { cpu_percent: 10, recorded_at: observedAt } }]
                 : [],
               total: hostRegistered ? 1 : 0,
             }),
@@ -277,7 +282,8 @@ describe("Onboarding wizard", () => {
                   id: "bt-ready-1",
                   hostname: "ready-server",
                   expires_at: new Date(Date.now() + 600_000).toISOString(),
-                  consumed_at: hostRegistered ? new Date().toISOString() : null,
+                  consumed_at: hostRegistered ? consumedAt : null,
+                  consumed_by_host_id: hostRegistered ? "h-ready-1" : null,
                 },
               ],
               count: 1,

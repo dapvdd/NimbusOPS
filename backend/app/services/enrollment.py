@@ -9,8 +9,8 @@ one host.
 from __future__ import annotations
 
 import logging
-
 from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -19,7 +19,7 @@ from ..core.codes import ErrorCode
 from ..core.config import get_settings
 from ..core.errors import ApiError
 from ..core.security import generate_agent_token, hash_session_token
-from ..models import BootstrapToken, Host, HostEvent
+from ..models import BootstrapToken, Host, HostEvent, ProvisioningOwnership
 
 logger = logging.getLogger("nimbusops.enrollment")
 
@@ -73,6 +73,20 @@ def issue_bootstrap_token(
         raise ApiError(422, ErrorCode.INTERNAL, "hostname must be 1-255 characters")
     if intent not in ("enroll", "reenroll"):
         raise ApiError(422, ErrorCode.INTERNAL, "intent must be 'enroll' or 'reenroll'")
+
+    owner = db.scalar(
+        select(ProvisioningOwnership)
+        .join(Host, ProvisioningOwnership.host_id == Host.id)
+        .where(
+            Host.hostname == hostname,
+            ProvisioningOwnership.disposition.in_(("HELD", "RECONCILING")),
+        )
+    )
+    if owner is not None:
+        raise ApiError(
+            409, ErrorCode.TARGET_ALREADY_MANAGED,
+            "a provisioning job owns this host; release ownership before issuing a bootstrap token",
+        )
 
     settings = get_settings()
     ttl = int(expires_in_seconds or settings.bootstrap_token_ttl_seconds)

@@ -255,3 +255,143 @@ def test_concurrent_issue_race_window_before_any_commit(client, db_session):
     finally:
         issuer.rollback()
         issuer.close()
+
+
+# ------------------------------------------------------- B3/P6: ownership guard
+
+
+def _seed_ownership(db_session, host_id: str, job_id: str, disposition: str = "HELD"):
+    """Insert a full FK chain (machine → connection → target → validation →
+    job → ownership) binding host_id to a job. FKs are DEFERRABLE so order
+    within the transaction does not matter, but parent PKs must all exist at
+    COMMIT."""
+    import uuid as _uuid
+
+    from backend.app.models import (
+        ProvisioningConnection,
+        ProvisioningJob,
+        ProvisioningMachine,
+        ProvisioningOwnership,
+        ProvisioningTarget,
+        ProvisioningValidation,
+    )
+    from backend.tests.test_operator_auth import _seed_operator
+
+    actor_id = _seed_operator(db_session).id
+
+    machine_id = f"mch-{job_id}"
+    conn_id = f"con-{job_id}"
+    target_id = f"tgt-{job_id}"
+    validation_id = f"val-{job_id}"
+
+    db_session.add(ProvisioningMachine(
+        id=machine_id, machine_binding_hash=f"bind-{job_id}",
+    ))
+    db_session.add(ProvisioningConnection(
+        id=conn_id, provider="GENERIC_LINUX", display_name=f"conn {job_id}",
+        policy_hash="0" * 64,
+    ))
+    db_session.add(ProvisioningTarget(
+        id=target_id, connection_id=conn_id, canonical_key=f"ck-{job_id}",
+        host_id=host_id, mapping_status="MAPPED", mapping_revision=1,
+    ))
+    db_session.add(ProvisioningValidation(
+        id=validation_id, target_id=target_id, actor_id=actor_id,
+        plan_json="{}", plan_hash="0" * 64, config_revision=0, mapping_revision=0,
+        observed_identity_hash="0" * 64, created_at=0,
+        expires_at=9_999_999_999_999,
+    ))
+    db_session.add(ProvisioningJob(
+        id=job_id, target_id=target_id, operation="INSTALL", expected_host_id=host_id,
+        validation_id=validation_id, requester_id=actor_id,
+        approval_hash="0" * 64, approval_expires_at=9_999_999_999_999,
+        plan_json="{}", deadline_at=9_999_999_999_999, created_at=0, updated_at=0,
+    ))
+    row = ProvisioningOwnership(
+        target_id=target_id, host_id=host_id, owner_job_id=job_id,
+        generation=1, disposition=disposition, acquired_at=0,
+    )
+    db_session.add(row)
+    db_session.commit()
+    return row
+
+
+def _seed_host_row(db_session, hostname: str):
+    """Insert a bare Host row and return its id."""
+    from datetime import datetime, timezone
+
+    from backend.app.models import Host
+
+    host = Host(
+        hostname=hostname,
+        agent_token_hash="0" * 64,
+        enrolled_at=datetime.now(timezone.utc),
+    )
+    db_session.add(host)
+    db_session.commit()
+    return host.id
+
+
+def test_issue_blocked_while_ownership_held(client, db_session):
+    """B3: bootstrap token issuance must be refused while a provisioning job
+    holds ownership of the target host (409 TARGET_ALREADY_MANAGED)."""
+    from backend.app.core.codes import ErrorCode
+
+    admin = _admin(client, db_session)
+    host_id = _seed_host_row(db_session, "owned-host")
+    _seed_ownership(db_session, host_id, "job-1", "HELD")
+
+    resp = _issue(client, admin, "owned-host")
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == ErrorCode.TARGET_ALREADY_MANAGED
+
+    # No token row may have been created.
+    from backend.app.models import BootstrapToken
+
+    assert db_session.query(BootstrapToken).filter(BootstrapToken.hostname == "owned-host").count() == 0
+
+
+def test_issue_blocked_while_ownership_reconciling(client, db_session):
+    """RECONCILING ownership (post-failure repair in flight) also fences issuance."""
+    from backend.app.core.codes import ErrorCode
+
+    admin = _admin(client, db_session)
+    host_id = _seed_host_row(db_session, "recon-host")
+    _seed_ownership(db_session, host_id, "job-2", "RECONCILING")
+
+    resp = _issue(client, admin, "recon-host")
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == ErrorCode.TARGET_ALREADY_MANAGED
+
+
+def test_issue_allowed_after_ownership_released(client, db_session):
+    """A RELEASED ownership row (job done/cancelled) does NOT fence issuance —
+    the row survives release (§5) but the host can be re-onboarded."""
+    admin = _admin(client, db_session)
+    host_id = _seed_host_row(db_session, "freed-host")
+    _seed_ownership(db_session, host_id, "job-3", "RELEASED")
+
+    resp = _issue(client, admin, "freed-host")
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["token"]
+
+
+def test_issue_allowed_for_unknown_hostname(client, db_session):
+    """A brand-new hostname (no Host row) has no ownership to check — issuance
+    proceeds. This keeps fresh onboarding unaffected by the guard."""
+    admin = _admin(client, db_session)
+    resp = _issue(client, admin, "brand-new-host")
+    assert resp.status_code == 201, resp.text
+
+
+def test_reenroll_issue_blocked_while_ownership_held(client, db_session):
+    """P6: re-enroll bootstrap tokens are fenced by the same ownership guard."""
+    from backend.app.core.codes import ErrorCode
+
+    admin = _admin(client, db_session)
+    host_id = _seed_host_row(db_session, "re-enroll-owned")
+    _seed_ownership(db_session, host_id, "job-4", "HELD")
+
+    resp = _issue(client, admin, "re-enroll-owned", intent="reenroll")
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == ErrorCode.TARGET_ALREADY_MANAGED
