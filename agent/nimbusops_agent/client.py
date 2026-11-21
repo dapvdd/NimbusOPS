@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+from .tls import custom_ca_context
 
 logger = logging.getLogger("nimbusops.agent")
 
@@ -38,6 +39,7 @@ class Sender:
         backoff_max: float = 30.0,
         retry_status: set[int] | None = None,
         sleep_fn=time.sleep,
+        ca_bundle: str | None = None,
     ) -> None:
         self.server_url = server_url.rstrip("/")
         self.host_id = host_id
@@ -49,7 +51,11 @@ class Sender:
         self.backoff_max = backoff_max
         self.retry_status = retry_status or RETRYABLE_STATUS
         self._sleep = sleep_fn
-        self._client = httpx.Client(timeout=timeout)
+        self._client = (
+            httpx.Client(timeout=timeout, verify=custom_ca_context(ca_bundle))
+            if ca_bundle is not None
+            else httpx.Client(timeout=timeout)
+        )
         # RC2 F04: authoritative dispatch flag from the last heartbeat.
         # None means "not yet told"; callers should treat that conservatively.
         self.docker_enabled: bool | None = None

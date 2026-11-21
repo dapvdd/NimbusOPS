@@ -3,19 +3,33 @@
 set +x
 set -euo pipefail
 umask 077
-if [[ $EUID != 0 || $# -lt 2 || $# -gt 3 ]]; then
-  echo 'Usage: sudo bash install.sh https://control-plane exact-hostname [--reenroll]' >&2
+if [[ $EUID != 0 || $# -lt 2 ]]; then
+  echo 'Usage: sudo bash install.sh https://control-plane exact-hostname [--reenroll] [--ca-bundle /absolute/ca.pem]' >&2
   exit 2
 fi
 server=$1
 hostname=$2
-reenroll=${3:-}
+shift 2
+reenroll=''
+ca_bundle=''
+while (( $# )); do
+  case "$1" in
+    --reenroll) [[ -z $reenroll ]] || exit 2; reenroll=$1; shift ;;
+    --ca-bundle) [[ $# -ge 2 && -z $ca_bundle && -n $2 ]] || exit 2; ca_bundle=$2; shift 2 ;;
+    *) echo 'Invalid installer option' >&2; exit 2 ;;
+  esac
+done
 [[ $server =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?$ ]] || { echo 'HTTPS origin required' >&2; exit 2; }
 [[ $hostname =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}[a-zA-Z0-9]$ ]] || { echo 'Invalid hostname' >&2; exit 2; }
 [[ -z $reenroll || $reenroll == --reenroll ]] || exit 2
 source /etc/os-release
 [[ $ID == ubuntu && $VERSION_ID == 24.04 && $(uname -m) == x86_64 ]] || { echo 'Ubuntu 24.04 amd64 required' >&2; exit 2; }
 bundle=$(cd -- "$(dirname -- "$0")" && pwd)
+tls_args=()
+tls_service=''
+if [[ -n $ca_bundle ]]; then
+  python3 "$bundle/prepare-ca.py" "$ca_bundle"
+fi
 state=/var/lib/nimbusops-agent
 target=/opt/nimbusops-agent
 if [[ -f $state/agent.json && $reenroll != --reenroll ]]; then
@@ -27,6 +41,13 @@ apt-get install -y python3 python3-venv ca-certificates
 id nimbusops-agent >/dev/null 2>&1 || useradd --system --home-dir "$state" --shell /usr/sbin/nologin nimbusops-agent
 install -d -m 0700 -o nimbusops-agent -g nimbusops-agent "$state"
 install -d -m 0755 "$target"
+if [[ -n $ca_bundle ]]; then
+  persisted_ca=/etc/nimbusops-agent/ca-bundle.pem
+  python3 "$bundle/prepare-ca.py" "$ca_bundle" --persist
+  runuser -u nimbusops-agent -- test -r "$persisted_ca"
+  tls_args=(--ca-bundle "$persisted_ca")
+  tls_service="--ca-bundle $persisted_ca"
+fi
 python3 -m venv "$target/venv"
 "$target/venv/bin/pip" install --no-index --find-links "$bundle/wheels" --require-hashes -r "$bundle/requirements.lock"
 site=$("$target/venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
@@ -41,9 +62,9 @@ chown nimbusops-agent:nimbusops-agent "$state/bootstrap.token"
 trap 'rm -f "$state/bootstrap.token"' EXIT
 systemctl stop nimbusops-agent.service 2>/dev/null || true
 if [[ $reenroll == --reenroll ]]; then
-  runuser -u nimbusops-agent -- "$target/venv/bin/python" -m nimbusops_agent --server-url "$server" --hostname "$hostname" --state-file "$state/agent.json" --bootstrap-token-file "$state/bootstrap.token" --telemetry-only --reenroll
+  runuser -u nimbusops-agent -- "$target/venv/bin/python" -m nimbusops_agent "${tls_args[@]}" --server-url "$server" --hostname "$hostname" --state-file "$state/agent.json" --bootstrap-token-file "$state/bootstrap.token" --telemetry-only --reenroll
 else
-  if ! runuser -u nimbusops-agent -- "$target/venv/bin/python" -m nimbusops_agent --server-url "$server" --hostname "$hostname" --state-file "$state/agent.json" --bootstrap-token-file "$state/bootstrap.token" --telemetry-only --once; then
+  if ! runuser -u nimbusops-agent -- "$target/venv/bin/python" -m nimbusops_agent "${tls_args[@]}" --server-url "$server" --hostname "$hostname" --state-file "$state/agent.json" --bootstrap-token-file "$state/bootstrap.token" --telemetry-only --once; then
     # Identity is atomically saved only after successful registration. A failed
     # first telemetry request must not strand that identity without a service.
     [[ -s $state/agent.json ]] || exit 1
@@ -59,7 +80,7 @@ Wants=network-online.target
 [Service]
 User=nimbusops-agent
 Group=nimbusops-agent
-ExecStart=$target/venv/bin/python -m nimbusops_agent --server-url $server --hostname $hostname --state-file $state/agent.json --telemetry-only
+ExecStart=$target/venv/bin/python -m nimbusops_agent $tls_service --server-url $server --hostname $hostname --state-file $state/agent.json --telemetry-only
 Restart=on-failure
 RestartSec=10
 UMask=0077

@@ -33,6 +33,7 @@ export function ManualOnboarding() {
 
   const [step, setStep] = useState<WizardStep>("host");
   const [hostname, setHostname] = useState("");
+  const [caBundle, setCaBundle] = useState("");
   const [mode, setMode] = useState<"telemetry-only" | "executor">("telemetry-only");
 
   // Host existence check state
@@ -208,7 +209,8 @@ export function ManualOnboarding() {
   };
 
   const legacyCommands = installCommands(window.location.origin, "/var/lib/nimbusops-agent", mode);
-  const verified = verifiedInstallCommand(window.location.origin, hostname.trim(), reenrolling);
+  const validCaBundle = !caBundle || (/^\/[a-zA-Z0-9_./-]+$/.test(caBundle) && !caBundle.split("/").includes(".."));
+  const verified = verifiedInstallCommand(window.location.origin, hostname.trim(), reenrolling, validCaBundle && caBundle ? caBundle : undefined);
   const commands = mode === "telemetry-only"
     ? { promptToFile: verified, systemdTab: "# The verified installer above enrolls and starts the service. Do not run it twice.", foregroundTab: "# For diagnostics: sudo journalctl -u nimbusops-agent -n 50 --no-pager" }
     : legacyCommands;
@@ -302,6 +304,11 @@ export function ManualOnboarding() {
               />
             </Field>
 
+            <Field id="ca-bundle" label="Private CA bundle path (optional)" hint="Target-local, root-controlled PEM file. Leave empty for default public CA trust. Supported by the verified telemetry-only installer.">
+              <input id="ca-bundle" type="text" value={caBundle} pattern="/[a-zA-Z0-9_./-]+" onChange={(e) => { setCaBundle(e.target.value); if (e.target.value) setMode("telemetry-only"); }} className="w-full rounded-lg border border-ink-600 bg-ink-900 px-3 py-2 text-sm text-ink-100" />
+            </Field>
+            {!validCaBundle && <InlineAlert variant="bad" title="Invalid CA path">Use an absolute path without spaces, shell characters or parent traversal.</InlineAlert>}
+
             {fleetCheckError && (
               <InlineAlert variant="bad" title="Duplicate check failed">
                 {fleetCheckError} The check must succeed before a token can be issued, otherwise
@@ -344,7 +351,7 @@ export function ManualOnboarding() {
               <Button
                 type="submit"
                 variant="primary"
-                disabled={!hostname.trim() || checkingFleet || !!existingHost}
+                disabled={!hostname.trim() || checkingFleet || !!existingHost || !validCaBundle}
                 loading={checkingFleet}
               >
                 Continue
@@ -412,6 +419,7 @@ export function ManualOnboarding() {
                 type="radio"
                 name="mode"
                 value="executor"
+                disabled={!!caBundle}
                 checked={mode === "executor"}
                 onChange={() => setMode("executor")}
                 className="sr-only"

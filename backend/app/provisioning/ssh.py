@@ -23,8 +23,15 @@ class Target:
     known_hosts: str
     machine_id: str
     port: int = 22
+    ca_bundle: str | None = None
 
     def __post_init__(self) -> None:
+        if self.ca_bundle is not None and (
+            not isinstance(self.ca_bundle, str)
+            or not re.fullmatch(r"/[a-zA-Z0-9_./-]+", self.ca_bundle)
+            or ".." in self.ca_bundle.split("/")
+        ):
+            raise ValueError("invalid absolute target CA bundle path")
         ipaddress.ip_address(self.address)  # No DNS rebinding or option injection.
         for value in (self.id, self.username, self.hostname):
             if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,252}", value):
@@ -144,8 +151,8 @@ def preflight(target: Target) -> dict[str, str]:
     return parse_preflight(target, result.stdout)
 
 
-AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-dualmode1-ubuntu24.04-amd64.tar.gz"
-AGENT_SHA256 = "8f0a715761aff04920201409c95d648450329d68acb1e41a616c5e131637d7d9"
+AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-dualmode2-ubuntu24.04-amd64.tar.gz"
+AGENT_SHA256 = "cf2bced62d522473af86dd623458835711957dec25d8ab8c0aac501616a3f2c1"
 
 
 def adapt_installer(source: str) -> str:
@@ -183,6 +190,9 @@ def install(target: Target, origin: str, token: str) -> None:
         raise ValueError("INVALID_BOOTSTRAP_INPUT")
     import inspect
 
+    ca_download = f" --cacert {shlex.quote(target.ca_bundle)}" if target.ca_bundle else ""
+    ca_install = f" --ca-bundle {shlex.quote(target.ca_bundle)}" if target.ca_bundle else ""
+
     adapter = inspect.getsource(adapt_installer) + """
 from pathlib import Path
 p = Path("install.sh")
@@ -198,11 +208,11 @@ IFS= read -r bootstrap
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cd "$work"
-curl --fail --silent --show-error --proto '=https' --tlsv1.2 {shlex.quote(origin + '/releases/' + AGENT_RELEASE)} -o agent.tar.gz
+curl --fail --silent --show-error --proto '=https' --tlsv1.2{ca_download} {shlex.quote(origin + '/releases/' + AGENT_RELEASE)} -o agent.tar.gz
 printf '%s  %s\\n' {AGENT_SHA256} agent.tar.gz | sha256sum --check --status
 tar -xzf agent.tar.gz
 python3 -c {shlex.quote(adapter)}
-printf '%s\\n' "$bootstrap" | bash install.sh {shlex.quote(origin)} {shlex.quote(target.hostname)}
+printf '%s\\n' "$bootstrap" | bash install.sh {shlex.quote(origin)} {shlex.quote(target.hostname)}{ca_install}
 unset bootstrap
 """
     try:

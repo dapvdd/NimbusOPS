@@ -19,6 +19,7 @@ def build_release(root: Path, wheels: Path, output: Path) -> str:
     for path in sorted((root / "agent/nimbusops_agent").glob("*.py")):
         entries[f"nimbusops_agent/{path.name}"] = path.read_bytes().replace(b"\r\n", b"\n")
     entries["install.sh"] = (root / "deploy/agent-install.sh").read_bytes().replace(b"\r\n", b"\n")
+    entries["prepare-ca.py"] = (root / "deploy/prepare-ca.py").read_bytes().replace(b"\r\n", b"\n")
     requirements = []
     for wheel in sorted(wheels.glob("*.whl")):
         data = wheel.read_bytes()

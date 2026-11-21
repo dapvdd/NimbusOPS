@@ -52,6 +52,7 @@ def run_reenroll(
     server_url: str,
     agent_mode: str | None,
     hostname: str | None = None,
+    ca_bundle: str | None = None,
 ) -> int:
     """Task 2.1: one-shot re-enroll.
 
@@ -70,6 +71,7 @@ def run_reenroll(
     sender = Sender(
         server_url=server_url,
         host_id="pending-reenroll",
+        ca_bundle=ca_bundle,
         agent_token="",
     )
     try:
@@ -91,6 +93,7 @@ def run_reenroll(
         verify_sender = Sender(
             server_url=server_url,
             host_id=new_identity.host_id,
+            ca_bundle=ca_bundle,
             agent_token=new_identity.agent_token,
         )
         try:
@@ -127,6 +130,7 @@ def run_apply_credential_file(
     candidate_path: pathlib.Path,
     server_url: str,
     agent_mode: str | None = None,
+    ca_bundle: str | None = None,
 ) -> int:
     """Task 2.2: apply a candidate credential file.
 
@@ -169,6 +173,7 @@ def run_apply_credential_file(
     verify_sender = Sender(
         server_url=server_url,
         host_id=current_identity.host_id,
+        ca_bundle=ca_bundle,
         agent_token=new_token,
     )
     try:
@@ -223,6 +228,7 @@ def ensure_enrolled(cfg: Config) -> tuple[Identity, bool]:
     sender = Sender(
         server_url=cfg.server_url,
         host_id="pending-enrollment",
+        ca_bundle=cfg.ca_bundle,
         agent_token=cfg.enrollment_token,
     )
     try:
@@ -287,7 +293,7 @@ def run(cfg: Config) -> int:
     if created:
         pass  # Freshly enrolled; continue into main loop.
 
-    sender = Sender(server_url=cfg.server_url, host_id=identity.host_id, agent_token=identity.agent_token)
+    sender = Sender(server_url=cfg.server_url, host_id=identity.host_id, agent_token=identity.agent_token, ca_bundle=cfg.ca_bundle)
     # Docker integration is optional: monitoring runs whether or not Docker works.
     worker = None
     if not cfg.telemetry_only:
@@ -330,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="nimbusops-agent", description="NimbusOps host agent")
     parser.add_argument("--server-url", default=None, help="Control server base URL")
     parser.add_argument("--hostname", default=None, help="Exact dashboard-selected enrollment hostname")
+    parser.add_argument("--ca-bundle", default=None, help="Absolute PEM CA bundle for control-plane TLS")
     parser.add_argument("--enrollment-token", default=None, help="Legacy shared token for initial enrollment")
     parser.add_argument(
         "--bootstrap-token-file",
@@ -375,6 +382,7 @@ def main(argv: list[str] | None = None) -> int:
             server_url=args.server_url or os.environ.get("NIMBUSOPS_AGENT_SERVER_URL", DEFAULT_SERVER_URL),
             enrollment_token=args.enrollment_token or os.environ.get("NIMBUSOPS_AGENT_ENROLLMENT_TOKEN", ""),
             bootstrap_token=bootstrap_token,
+            ca_bundle=args.ca_bundle,
             hostname=args.hostname or os.environ.get("NIMBUSOPS_AGENT_HOSTNAME") or None,
             interval=float(args.interval or os.environ.get("NIMBUSOPS_AGENT_INTERVAL", DEFAULT_INTERVAL)),
             state_file=pathlib.Path(
@@ -396,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
             server_url=cfg.server_url,
             agent_mode=agent_mode,
             hostname=cfg.hostname,
+            ca_bundle=cfg.ca_bundle,
         )
 
     if args.apply_credential_file:
@@ -403,6 +412,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_apply_credential_file(
             state_path=cfg.state_file,
             candidate_path=pathlib.Path(args.apply_credential_file),
+            ca_bundle=cfg.ca_bundle,
             server_url=cfg.server_url,
             agent_mode=agent_mode,
         )

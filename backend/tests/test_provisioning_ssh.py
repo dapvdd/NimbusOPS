@@ -4,6 +4,31 @@ import json
 
 import pytest
 
+
+def test_custom_ca_crosses_sudo_explicitly(monkeypatch):
+    import shlex
+    from types import SimpleNamespace
+    from backend.app.provisioning.ssh import install
+    captured = {}
+    def run(argv, **kwargs):
+        captured["command"] = argv[-1]
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr("backend.app.provisioning.ssh.subprocess.run", run)
+    target = Target("test", "192.0.2.10", "installer", "new-vm", "/key", "/known", "a" * 32, ca_bundle="/etc/nimbusops/enterprise.pem")
+    install(target, "https://demo.example", "secret")
+    command = shlex.split(captured["command"])
+    assert command[:4] == ["sudo", "-n", "bash", "-c"]
+    script = command[4]
+    assert "--cacert /etc/nimbusops/enterprise.pem" in script
+    assert "--ca-bundle /etc/nimbusops/enterprise.pem" in script
+    assert "sudo -E" not in script
+
+
+@pytest.mark.parametrize("path", ["relative.pem", "", "/tmp/ca\n.pem", "/tmp/$(bad)", "/tmp/ca file.pem"])
+def test_policy_rejects_unsafe_ca_paths(path):
+    with pytest.raises(ValueError, match="CA"):
+        Target("test", "192.0.2.10", "installer", "new-vm", "/key", "/known", "a" * 32, ca_bundle=path)
+
 from backend.app.provisioning.ssh import Target, load_targets, ssh_argv, parse_preflight
 
 
@@ -26,7 +51,8 @@ def test_install_transport_keeps_token_out_of_argv(monkeypatch):
     assert "ephemeral-secret" not in str(captured["argv"])
     assert captured["input"] == "ephemeral-secret\n"
     command = captured["argv"][-1]
-    assert "8f0a715761aff04920201409c95d648450329d68acb1e41a616c5e131637d7d9" in command
+    from backend.app.provisioning.ssh import AGENT_SHA256
+    assert AGENT_SHA256 in command
     assert "--reenroll" not in command
     assert "agent.json" in command
 

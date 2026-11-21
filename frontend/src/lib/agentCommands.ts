@@ -5,10 +5,13 @@ export interface InstallCommands {
 }
 
 /** Immutable demo release; update only together with rebuilt artifact and digest. */
-export const AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-dualmode1-ubuntu24.04-amd64.tar.gz";
-export const AGENT_SHA256 = "8f0a715761aff04920201409c95d648450329d68acb1e41a616c5e131637d7d9";
+export const AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-dualmode2-ubuntu24.04-amd64.tar.gz";
+export const AGENT_SHA256 = "cf2bced62d522473af86dd623458835711957dec25d8ab8c0aac501616a3f2c1";
 
-export function verifiedInstallCommand(origin: string, hostname: string, reenroll = false): string {
+export function verifiedInstallCommand(origin: string, hostname: string, reenroll = false, caBundle?: string): string {
+  if (caBundle !== undefined && (!/^\/[a-zA-Z0-9_./-]+$/.test(caBundle) || caBundle.split("/").includes(".."))) {
+    throw new Error("Invalid absolute CA bundle path");
+  }
   const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
   return `# Ubuntu 24.04 amd64 only. Token is prompted privately by the installer.
 # Requires the reviewed release to be published at this exact URL.
@@ -16,10 +19,10 @@ export function verifiedInstallCommand(origin: string, hostname: string, reenrol
   set -eu
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT
-  curl --fail --silent --show-error --proto '=https' --tlsv1.2 ${quote(`${origin}/releases/${AGENT_RELEASE}`)} -o "$work/agent.tar.gz"
+  curl --fail --silent --show-error --proto '=https' --tlsv1.2${caBundle ? ` --cacert ${quote(caBundle)}` : ""} ${quote(`${origin}/releases/${AGENT_RELEASE}`)} -o "$work/agent.tar.gz"
   printf '%s  %s\\n' '${AGENT_SHA256}' "$work/agent.tar.gz" | sha256sum --check --status
   tar -xzf "$work/agent.tar.gz" -C "$work"
-  sudo bash "$work/install.sh" ${quote(origin)} ${quote(hostname)}${reenroll ? " --reenroll" : ""}
+  sudo bash "$work/install.sh" ${quote(origin)} ${quote(hostname)}${reenroll ? " --reenroll" : ""}${caBundle ? ` --ca-bundle ${quote(caBundle)}` : ""}
 )`;
 }
 

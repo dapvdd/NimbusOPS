@@ -49,8 +49,15 @@ class Config:
     # from the enroll payload); validated against the server-side literal.
     environment: str | None = None
     hostname: str | None = None
+    ca_bundle: str | None = None
 
     def __post_init__(self) -> None:
+        if self.ca_bundle is not None:
+            from .tls import custom_ca_context
+            try:
+                custom_ca_context(self.ca_bundle)
+            except ValueError as exc:
+                raise ConfigError(str(exc)) from exc
         if not self.server_url:
             raise ConfigError("server_url is required")
         if not self.server_url.startswith(("http://", "https://")):

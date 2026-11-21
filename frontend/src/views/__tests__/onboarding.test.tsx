@@ -15,6 +15,12 @@ afterEach(() => {
 });
 
 describe("Onboarding wizard", () => {
+  it("accepts an explicit target-local CA path", () => {
+    render(<MemoryRouter><Onboarding /></MemoryRouter>);
+    const input = screen.getByLabelText(/private CA bundle path/i);
+    fireEvent.change(input, { target: { value: "/etc/nimbusops/ca.pem" } });
+    expect(input).toHaveValue("/etc/nimbusops/ca.pem");
+  });
   it("requires explicit confirmation before re-enroll issuance", async () => {
     const { api } = await import("../../api/client");
     vi.spyOn(api, "listHosts").mockResolvedValue({ hosts: [{ id: "h-revoked", hostname: "demo.example.org", status: "OFFLINE", is_revoked: true }], total: 1 } as any);
