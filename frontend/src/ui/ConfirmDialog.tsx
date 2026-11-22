@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, type KeyboardEvent } from "react";
 import { Button } from "./Button";
 
 export interface ConfirmDialogProps {
@@ -33,12 +33,36 @@ export function ConfirmDialog({
   onClose,
 }: ConfirmDialogProps) {
   const [typedValue, setTypedValue] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      setTypedValue("");
-    }
+    if (!isOpen) return;
+
+    const trigger = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const dialog = dialogRef.current;
+    setTypedValue("");
+    const initialFocus = dialog?.querySelector<HTMLElement>("input, button:not(:disabled)");
+    (initialFocus ?? dialog)?.focus();
+
+    return () => {
+      if (trigger?.isConnected) trigger.focus();
+    };
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !busy) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const active = document.activeElement;
+    // Disabling the submitting button can leave focus there or drop it to body.
+    // Keep this separate from the open lifecycle so trigger restoration is preserved.
+    if (!dialog.contains(active) || active?.matches(":disabled")) {
+      const enabledControl = dialog.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)");
+      (enabledControl ?? dialog).focus();
+    }
+  }, [isOpen, busy]);
 
   if (!isOpen) return null;
 
@@ -51,9 +75,40 @@ export function ConfirmDialog({
     void onConfirm();
   };
 
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!busy) onClose();
+      return;
+    }
+    if (event.key !== "Tab") return;
+
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const controls = Array.from(dialog.querySelectorAll<HTMLElement>("input:not(:disabled), button:not(:disabled)"));
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    const active = document.activeElement;
+
+    if (!first || !controls.some((control) => control === active)) {
+      event.preventDefault();
+      (event.shiftKey ? last ?? dialog : first ?? dialog).focus();
+    } else if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
     <div
+      ref={dialogRef}
       role="dialog"
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
       aria-modal="true"
       aria-labelledby="confirm-dialog-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink-950/80 backdrop-blur-sm"
@@ -89,7 +144,6 @@ export function ConfirmDialog({
               placeholder={expectedValue}
               value={typedValue}
               onChange={(e) => setTypedValue(e.target.value)}
-              autoFocus
             />
           </div>
         )}

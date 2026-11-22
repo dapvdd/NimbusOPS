@@ -1,7 +1,47 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, it, expect, vi } from 'vitest';
 import AutomaticSetup from '../AutomaticSetup';
+vi.mock('../SetupHistory', () => ({default: ({onSelect}: {onSelect: (id: string) => void}) => <button onClick={() => onSelect('old-job')}>Inspect old-job</button>}));
 afterEach(() => {vi.restoreAllMocks(); sessionStorage.clear();});
+
+it('opens a discovered job and clears stale previous detail without retry controls', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: []});
+  vi.spyOn(provisioning, 'job').mockResolvedValue({id: 'old-job', state: 'FAILED', step: 'REVALIDATE', reason_code: 'REJECTED', reconciliation_required: false, retry_allowed: true, events: []});
+  render(<AutomaticSetup />);
+  fireEvent.click(screen.getByRole('button', {name: 'Inspect old-job'}));
+  expect(await screen.findByText('Reason: REJECTED')).toBeInTheDocument();
+  expect(screen.queryByRole('button', {name: /retry with/i})).not.toBeInTheDocument();
+});
+
+it('does not discard an uncertain confirmation when inspecting history', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  const pending = JSON.stringify({key: 'uncertain-key', plan: {target_id: 'target'}});
+  sessionStorage.setItem('nimbusops.setup.confirm.v1', pending);
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: []});
+  vi.spyOn(provisioning, 'recover').mockRejectedValue(new Error('offline'));
+  vi.spyOn(provisioning, 'job').mockResolvedValue({id: 'old-job', state: 'VERIFYING', step: 'INSTALL_ADMITTED', reason_code: null, reconciliation_required: true, retry_allowed: false, events: []});
+  render(<AutomaticSetup />);
+  fireEvent.click(screen.getByRole('button', {name: 'Inspect old-job'}));
+  await screen.findByText('Step: INSTALL_ADMITTED');
+  expect(sessionStorage.getItem('nimbusops.setup.confirm.v1')).toBe(pending);
+});
+
+it('does not offer reference-clearing actions for an inspected terminal job while a confirmation is unresolved', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  const pending = JSON.stringify({key: 'uncertain-key', plan: {target_id: 'target'}});
+  sessionStorage.setItem('nimbusops.setup.confirm.v1', pending);
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: []});
+  vi.spyOn(provisioning, 'recover').mockRejectedValue(new Error('offline'));
+  vi.spyOn(provisioning, 'job').mockResolvedValue({id: 'old-job', state: 'FAILED', step: 'REVALIDATE', reason_code: 'REJECTED', reconciliation_required: false, retry_allowed: true, events: []});
+  render(<AutomaticSetup />);
+  fireEvent.click(screen.getByRole('button', {name: 'Inspect old-job'}));
+  await screen.findByText('Step: REVALIDATE');
+  expect(screen.queryByRole('button', {name: /add another server|clear unavailable job reference/i})).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: 'Return to unresolved confirmation'}));
+  expect(await screen.findByRole('button', {name: 'Recover same confirmation'})).toBeInTheDocument();
+  expect(sessionStorage.getItem('nimbusops.setup.confirm.v1')).toBe(pending);
+});
 
 it('shows preserved uncertain job step and reason without claiming enrollment or offering retry', async () => {
   const { provisioning } = await import('../../api/provisioning');

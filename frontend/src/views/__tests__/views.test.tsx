@@ -72,6 +72,7 @@ describe("Overview", () => {
     }));
     render(<MemoryRouter><Overview /></MemoryRouter>);
     await screen.findByTestId('all-clear');
+    expect(screen.getByTestId('all-clear')).toHaveTextContent('Provisioning outcomes are separate');
     fail = true;
     await act(async () => { pollHandlers.forEach(fn => fn()); });
     await screen.findAllByText(/Last refresh failed/);

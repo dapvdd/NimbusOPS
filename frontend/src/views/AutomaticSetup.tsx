@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { provisioning, type SetupJob, type SetupPlan } from '../api/provisioning';
 import { Button } from '../ui/Button';
 import { ApiFailure } from '../api/client';
+import SetupHistory from './SetupHistory';
 
 interface ConfirmationIntent { key: string; plan: SetupPlan }
 const intentStorage = 'nimbusops.setup.confirm.v1';
@@ -25,6 +26,7 @@ export default function AutomaticSetup() {
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
+  const [detailRefresh, setDetailRefresh] = useState(0);
   useEffect(() => {
     if (!intent || jobId) return;
     let active = true;
@@ -47,9 +49,10 @@ export default function AutomaticSetup() {
       try {
         const next = await provisioning.job(jobId);
         if (!active) return;
-        setJob(next); setError('');
+        setJob(next); setError(''); setMissing(false);
         if (!['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(next.state)) timer = setTimeout(poll, 3000);
       } catch (error) { if (active) {
+        setJob(null);
         setError('Progress unavailable. Installation is not retried automatically.');
         if (error instanceof ApiFailure && [403, 404].includes(error.status ?? 0)) setMissing(true);
         else timer = setTimeout(poll, 5000);
@@ -57,7 +60,7 @@ export default function AutomaticSetup() {
     };
     void poll();
     return () => { active = false; clearTimeout(timer); };
-  }, [jobId]);
+  }, [jobId, detailRefresh]);
   async function inspect() {
     setBusy(true); setError(''); setPlan(null); setConfirmed(false);
     try { setPlan(await provisioning.preflight(selected)); }
@@ -78,7 +81,7 @@ export default function AutomaticSetup() {
     finally { setBusy(false); }
   }
   function acceptJob(id: string) {
-    setJobId(id); setMissing(false);
+    setJob(null); setJobId(id); setMissing(false); setError('');
     try {
       sessionStorage.setItem('nimbusops.setup.job.v1', id);
       sessionStorage.removeItem(intentStorage);
@@ -109,15 +112,6 @@ export default function AutomaticSetup() {
     setJobId(''); setJob(null); setIntent(null); setMissing(false); setRejected(false); setPlan(null); setConfirmed(false); setSelected('');
     setError(unavailable ? 'Only the local reference was cleared; the job was not cancelled. Reconcile the prior installation before trying that target again.' : '');
   }
-  async function retry() {
-    setBusy(true); setError('');
-    try {
-      const result = await provisioning.retry(jobId);
-      try { sessionStorage.removeItem('nimbusops.setup.job.v1'); } catch { /* No secret is stored. */ }
-      setSelected(result.target_id); setJobId(''); setJob(null); setPlan(null); setConfirmed(false);
-    } catch { setError('Retry blocked: operator reconciliation is required.'); }
-    finally { setBusy(false); }
-  }
   return <section className="space-y-4" aria-label="Automatic Setup">
     <h2 className="text-xl font-semibold">Automatic Setup — recommended</h2>
     <p>Only operator-authorized Ubuntu 24.04 amd64 targets are available. SSH credentials and host keys are configured securely on the server, never entered in this browser.</p>
@@ -147,9 +141,13 @@ export default function AutomaticSetup() {
       </li>)}</ul>
       {job?.state === 'SUCCEEDED' ? <p>Enrollment, fresh heartbeat and telemetry verified.</p> : <p>Service startup alone is not proof of success.</p>}
       {job?.reconciliation_required && <p>Do not reinstall or reenroll. An uncertain outcome requires operator reconciliation; blind retry is blocked.</p>}
-      {job?.retry_allowed && <Button disabled={busy} onClick={retry}>Retry with new preflight and approval</Button>}
-      {job && ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(job.state) && !job.reconciliation_required && <Button onClick={() => clearReference()}>Add another server</Button>}
-      {missing && <Button onClick={() => clearReference(true)}>Clear unavailable job reference</Button>}
+      <Button onClick={() => setDetailRefresh(value => value + 1)}>Refresh job status</Button>
+      {!intent && job && ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(job.state) && !job.reconciliation_required && <Button onClick={() => clearReference()}>Add another server</Button>}
+      {!intent && missing && <Button onClick={() => clearReference(true)}>Clear unavailable job reference</Button>}
     </div>}
+    {intent && jobId && <div role="alert">An unresolved confirmation reference is preserved separately. Do not start another installation.
+      <Button onClick={() => { setJobId(''); setJob(null); }}>Return to unresolved confirmation</Button>
+    </div>}
+    <SetupHistory onSelect={id => { setJob(null); setJobId(id); setMissing(false); setError(''); setDetailRefresh(value => value + 1); }} />
   </section>;
 }

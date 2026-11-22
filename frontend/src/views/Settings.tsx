@@ -157,8 +157,10 @@ export default function Settings() {
           >
             <p className="font-semibold">Control plane degraded</p>
             <p className="text-xs text-ink-300">
-              The readiness probe reports {readiness?.ready === false ? "not ready" : "ready"} with database state{" "}
-              {readiness?.database ?? health?.database ?? "unknown"}.
+              {readiness
+                ? `The readiness probe reports ${readiness.ready ? "ready" : "not ready"} with database state ${readiness.database}.`
+                : "Readiness probe unavailable; readiness is not verified."}
+              {health && ` Health probe reports ${health.status} with database state ${health.database}.`}
             </p>
             <div data-testid="readiness-recovery" className="space-y-1 text-xs text-ink-200">
               <p className="font-semibold">Diagnose on the server:</p>

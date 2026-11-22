@@ -8,7 +8,13 @@ export interface SetupJob {
   reconciliation_required: boolean; retry_allowed: boolean;
    events: { sequence: number; code: string; at: number; safe_detail?: {transport_exit_status?: number} }[];
 }
+export interface SetupJobSummary {
+  id: string; target_id: string; method: string; operation: string;
+  created_at: number; updated_at: number; state: string; step: string;
+  reason_code: string | null; reconciliation_required: boolean;
+}
 export const provisioning = {
+  jobs: (offset = 0) => request<{jobs: SetupJobSummary[]; total: number}>(`/provisioning/jobs?limit=50&offset=${offset}`),
   targets: () => request<{targets: {id: string; hostname: string; address: string}[]}>('/provisioning/targets'),
   preflight: (target_id: string) => request<SetupPlan>('/provisioning/preflight', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({target_id}),

@@ -31,7 +31,10 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
       const [h, m, evRes] = await Promise.all([
         api.getHost(hostId),
         api.getHostMetrics(hostId, 60),
-        api.listHostEvents(hostId, 50).catch((err) => {
+        api.listHostEvents(hostId, 50).then((result) => {
+          setEventsError(null);
+          return result;
+        }).catch((err) => {
           setEventsError(err instanceof ApiFailure ? err.message : "Unable to load events.");
           return { events: [], count: 0 };
         }),
@@ -175,9 +178,10 @@ export default function HostDetail({ view = "overview" }: { view?: "overview" | 
         {eventsError && (
           <p className="rounded border border-signal-bad/40 bg-signal-bad/10 p-2 text-xs text-signal-bad">
             {eventsError}
+            <button type="button" onClick={() => void load()} className="ml-3 underline">Retry events</button>
           </p>
         )}
-        {events.length === 0 ? (
+        {events.length === 0 ? !eventsError && (
           <p className="rounded-lg border border-dashed border-ink-600 bg-ink-900 p-6 text-center text-xs text-ink-400">
             No events yet
           </p>

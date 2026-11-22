@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiFailure } from "../api/client";
 import type { Host } from "../api/types";
@@ -57,6 +57,8 @@ export function ManualOnboarding() {
   const [tokenConsumed, setTokenConsumed] = useState(false);
   const [tokenExpired, setTokenExpired] = useState(false);
   const [polling, setPolling] = useState(false);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const verificationInFlight = useRef(false);
 
   // Clear in-memory token on unmount for security
   useEffect(() => {
@@ -65,50 +67,55 @@ export function ManualOnboarding() {
     };
   }, []);
 
-  // Poll for token consumption and host appearance during verify step
-  useEffect(() => {
-    if (step !== "verify" || !tokenData) return;
-
-    let mounted = true;
-    const checkStatus = async () => {
-      if (document.visibilityState !== "visible") return;
+  // Manual refresh and polling use the same evidence and invalidation rules.
+  const checkStatus = useCallback(async (isCurrent: () => boolean = () => true) => {
+      if (!tokenData || verificationInFlight.current) return;
+      verificationInFlight.current = true;
       try {
         setPolling(true);
         const [tokenRes, hostRes] = await Promise.all([
           api.listBootstrapTokens({ limit: 50 }),
           api.listHosts(),
         ]);
-        if (!mounted) return;
+        if (!isCurrent()) return;
 
         const currentToken = tokenRes.tokens.find((t) => t.id === tokenData.id);
-        if (currentToken) {
-          if (currentToken.consumed_at) {
-            setTokenConsumed(true);
-          } else if (new Date(currentToken.expires_at).getTime() <= Date.now()) {
-            setTokenExpired(true);
-          }
-        }
+        setTokenConsumed(!!currentToken?.consumed_at);
+        setTokenExpired(!currentToken?.consumed_at && new Date(currentToken?.expires_at ?? tokenData.expires_at).getTime() <= Date.now());
+        setVerificationError(null);
 
         const proof = enrollmentProof(currentToken, hostRes.hosts);
         setHostRecord(proof.host);
         setOnboardingReady(proof.ready);
       } catch {
-        // Network blips during poll are ignored
+        if (!isCurrent()) return;
+        setHostRecord(null);
+        setOnboardingReady(false);
+        setTokenConsumed(false);
+        setTokenExpired(false);
+        setVerificationError("Verification unavailable. Current enrollment and telemetry status could not be confirmed. Retry Refresh Status.");
       } finally {
-        if (mounted) setPolling(false);
+        verificationInFlight.current = false;
+        if (isCurrent()) setPolling(false);
       }
+  }, [tokenData]);
+
+  // Poll for token consumption and host appearance during verify step.
+  useEffect(() => {
+    if (step !== "verify" || !tokenData) return;
+    let mounted = true;
+    const poll = () => {
+      if (document.visibilityState === "visible") void checkStatus(() => mounted);
     };
 
-    void checkStatus();
-    const timer = setInterval(() => {
-      void checkStatus();
-    }, 3000);
+    poll();
+    const timer = setInterval(poll, 3000);
 
     return () => {
       mounted = false;
       clearInterval(timer);
     };
-  }, [step, tokenData, hostname]);
+  }, [step, tokenData, checkStatus]);
 
   // Handle Step 1 submit
   const handleHostSubmit = async (e: React.FormEvent) => {
@@ -582,11 +589,14 @@ export function ManualOnboarding() {
             <div>
               <h2 className="text-base font-semibold text-ink-100">Enrollment Status</h2>
               <p className="text-xs text-ink-300 mt-1">
-                Awaiting connection from <strong className="font-mono">{hostname}</strong>…
+                {verificationError ? "Current status unknown for " : onboardingReady ? "Enrollment verified for " : tokenExpired ? "Enrollment expired for " : "Verification pending for "}
+                <strong className="font-mono">{hostname}</strong>.
               </p>
             </div>
             {hostRecord && <StatusBadge status={hostRecord.status} />}
           </div>
+
+          {verificationError && <InlineAlert variant="bad" title="Verification unavailable">{verificationError.replace("Verification unavailable. ", "")}</InlineAlert>}
 
           {tokenExpired && !hostRecord && (
             <InlineAlert
@@ -618,24 +628,24 @@ export function ManualOnboarding() {
             <div className="flex items-center justify-between text-xs">
               <span className="text-ink-200">2. Token consumed by agent</span>
               <span className={tokenConsumed ? "text-signal-good font-semibold" : "text-ink-400"}>
-                {tokenConsumed ? "Consumed" : "Waiting for agent…"}
+                {verificationError ? "Unknown" : tokenConsumed ? "Consumed" : tokenExpired ? "Expired" : "Waiting for agent…"}
               </span>
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-ink-200">3. Host registered in fleet</span>
               <span className={hostRecord ? "text-signal-good font-semibold" : "text-ink-400"}>
-                {hostRecord ? "Registered" : "Waiting…"}
+                {verificationError ? "Unknown" : hostRecord ? "Registered" : "Waiting…"}
               </span>
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-ink-200">4. Telemetry heartbeat</span>
               <span className={onboardingReady ? "text-signal-good font-semibold" : "text-ink-400"}>
-                {onboardingReady ? "Active" : "Awaiting fresh heartbeat and telemetry…"}
+                {verificationError ? "Unknown" : onboardingReady ? "Active" : "Awaiting fresh heartbeat and telemetry…"}
               </span>
             </div>
           </div>
 
-          {!hostRecord && !tokenExpired && (
+          {!hostRecord && !tokenExpired && !verificationError && (
             <div className="flex items-center gap-3 text-xs text-ink-300">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-ink-600 border-t-signal-info" />
               <span>Waiting for agent enrollment… Polling every 3 seconds.</span>
@@ -656,25 +666,7 @@ export function ManualOnboarding() {
             <Button
               type="button"
               variant="secondary"
-              onClick={async () => {
-                setPolling(true);
-                try {
-                  const [tokenRes, hostRes] = await Promise.all([
-                    api.listBootstrapTokens({ limit: 50 }),
-                    api.listHosts(),
-                  ]);
-                  const ct = tokenRes.tokens.find((t) => t.id === tokenData?.id);
-                  setTokenConsumed(!!ct?.consumed_at);
-                  const proof = enrollmentProof(ct, hostRes.hosts);
-                  setHostRecord(proof.host);
-                  setOnboardingReady(proof.ready);
-                } catch {
-                  // A failed manual refresh keeps the previous state; polling
-                  // continues and the last-read values stay visible.
-                } finally {
-                  setPolling(false);
-                }
-              }}
+              onClick={() => void checkStatus()}
               loading={polling}
             >
               Refresh Status

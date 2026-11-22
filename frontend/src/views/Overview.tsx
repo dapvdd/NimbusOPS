@@ -285,7 +285,7 @@ export default function Overview() {
           role="status"
           className="rounded-lg border border-signal-good/40 bg-signal-good/10 p-4 text-sm text-signal-good"
         >
-          All systems operational — the control plane is healthy and no host needs attention.
+          Current fleet checks passed — the control plane is healthy and no host needs attention. Provisioning outcomes are separate; inspect setup job history before assessing an installation.
         </div>
       )}
 

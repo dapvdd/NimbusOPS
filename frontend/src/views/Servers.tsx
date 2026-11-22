@@ -15,7 +15,7 @@ type FilterValue = "ALL" | "ONLINE" | "STALE" | "OFFLINE" | "REVOKED" | "AWAITIN
 export default function Servers() {
   const admin = useAdmin();
   const navigate = useNavigate();
-  const { hosts, tokens, loading, error, refetch } = useFleet();
+  const { hosts, tokens, loading, error, tokensError, refetch } = useFleet();
 
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterValue>("ALL");
@@ -105,6 +105,13 @@ export default function Servers() {
 
       {loading && <LoadingPanel label="Loading real servers" />}
 
+      {tokensError && (
+        <div role="alert" className="rounded-lg border border-signal-warn/40 p-3 text-sm text-signal-warn">
+          <p>Enrollment token feed unavailable. Awaiting enrollment status is unknown.</p>
+          <Button size="sm" onClick={() => void refetch()}>Retry token feed</Button>
+        </div>
+      )}
+
       {error && (
         <ErrorPanel
           error={error}
@@ -122,9 +129,9 @@ export default function Servers() {
             </h2>
           </div>
 
-          {filteredHosts.length === 0 && filteredAwaiting.length === 0 && (
+          {filteredHosts.length === 0 && filteredAwaiting.length === 0 && !(tokensError && (filter === "ALL" || filter === "AWAITING")) && (
             <p className="text-sm text-ink-400 py-8 text-center">
-              {query ? "No servers match your search." : "No real servers registered"}
+              {query ? "No servers match your search." : filter === "AWAITING" ? "No servers awaiting enrollment" : "No real servers registered"}
             </p>
           )}
 

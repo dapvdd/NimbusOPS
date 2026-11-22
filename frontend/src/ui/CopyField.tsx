@@ -9,17 +9,19 @@ export interface CopyFieldProps {
 
 export function CopyField({ value, label, secret = false, className = "" }: CopyFieldProps) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState('');
   const [revealed, setRevealed] = useState(!secret);
 
   const handleCopy = async () => {
+    setCopied(false); setCopyError('');
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-      }
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(value);
       setCopied(true);
       setTimeout(() => setCopied(false), 3000);
     } catch {
       setCopied(false);
+      setCopyError('Copy failed. Select the text and copy it manually.');
     }
   };
 
@@ -49,6 +51,7 @@ export function CopyField({ value, label, secret = false, className = "" }: Copy
         </button>
       </div>
       <div aria-live="polite" className="h-4">
+        {copyError && <p role="alert" className="text-xs text-signal-bad">{copyError}</p>}
         {copied && (
           <p role="status" className="text-xs text-signal-ok">
             Copied to clipboard.
