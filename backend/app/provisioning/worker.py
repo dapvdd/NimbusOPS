@@ -11,8 +11,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from sqlalchemy import func, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from ..core.db import SessionLocal
@@ -38,10 +40,13 @@ def claim_job(db: Session) -> str | None:
     )
     if job_id is None:
         return None
-    result = db.execute(
-        update(ProvisioningJob)
-        .where(ProvisioningJob.id == job_id, ProvisioningJob.state == "PENDING")
-        .values(state="RUNNING", reconciliation_required=True, updated_at=now_ms())
+    result = cast(
+        CursorResult[tuple[()]],
+        db.execute(
+            update(ProvisioningJob)
+            .where(ProvisioningJob.id == job_id, ProvisioningJob.state == "PENDING")
+            .values(state="RUNNING", reconciliation_required=True, updated_at=now_ms())
+        ),
     )
     db.commit()
     return job_id if result.rowcount == 1 else None

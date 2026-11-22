@@ -3,11 +3,11 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..core.db import get_db
@@ -41,7 +41,7 @@ def configured_targets() -> dict[str, Target]:
 
 
 @router.get("/targets")
-def targets(op: Operator = Depends(admin)) -> dict[str, Any]:
+def targets(op: Annotated[Operator, Depends(admin)]) -> dict[str, Any]:
     return {
         "targets": [
             {"id": t.id, "hostname": t.hostname, "address": t.address}
@@ -52,7 +52,9 @@ def targets(op: Operator = Depends(admin)) -> dict[str, Any]:
 
 @router.post("/preflight")
 def inspect_target(
-    req: PreflightRequest, op: Operator = Depends(admin), db: Session = Depends(get_db)
+    req: PreflightRequest,
+    op: Annotated[Operator, Depends(admin)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
     target = configured_targets().get(req.target_id)
     if target is None:
@@ -92,7 +94,9 @@ class ConfirmRequest(PreflightRequest):
 
 @router.post("/confirm", status_code=202)
 def confirm(
-    req: ConfirmRequest, op: Operator = Depends(admin), db: Session = Depends(get_db)
+    req: ConfirmRequest,
+    op: Annotated[Operator, Depends(admin)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, str]:
     try:
         job = recover_confirmation(
@@ -121,7 +125,9 @@ def confirm(
 
 @router.get("/requests/{idempotency_key}")
 def recover(
-    idempotency_key: str, op: Operator = Depends(admin), db: Session = Depends(get_db)
+    idempotency_key: str,
+    op: Annotated[Operator, Depends(admin)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, str]:
     job = recover_confirmation(db, op.id, idempotency_key)
     if job is None:
@@ -129,9 +135,49 @@ def recover(
     return {"id": job.id, "state": job.state}
 
 
+def job_metadata(job: ProvisioningJob) -> dict[str, Any]:
+    """Project the public history allowlist, never stored plans or credentials."""
+    return {
+        "id": job.id,
+        "target_id": job.target_id,
+        "method": "Automatic Setup",
+        "operation": job.operation,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "state": job.state,
+        "step": job.step,
+        "reason_code": job.reason_code,
+        "reconciliation_required": job.reconciliation_required,
+    }
+
+
+@router.get("/jobs")
+def list_jobs(
+    op: Annotated[Operator, Depends(admin)],
+    db: Annotated[Session, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict[str, Any]:
+    """Read one newest-first page of the requesting administrator's jobs."""
+    owner_filter = ProvisioningJob.requester_id == op.id
+    total = db.scalar(
+        select(func.count()).select_from(ProvisioningJob).where(owner_filter)
+    )
+    jobs = db.scalars(
+        select(ProvisioningJob)
+        .where(owner_filter)
+        .order_by(ProvisioningJob.created_at.desc(), ProvisioningJob.id.desc())
+        .limit(limit)
+        .offset(offset)
+    ).all()
+    return {"jobs": [job_metadata(job) for job in jobs], "total": total or 0}
+
+
 @router.get("/jobs/{job_id}")
 def job_status(
-    job_id: str, op: Operator = Depends(admin), db: Session = Depends(get_db)
+    job_id: str,
+    op: Annotated[Operator, Depends(admin)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
     job = db.get(ProvisioningJob, job_id)
     if job is None or job.requester_id != op.id:
@@ -142,11 +188,7 @@ def job_status(
         .order_by(ProvisioningEvent.sequence)
     ).all()
     return {
-        "id": job.id,
-        "state": job.state,
-        "step": job.step,
-        "reason_code": job.reason_code,
-        "reconciliation_required": job.reconciliation_required,
+        **job_metadata(job),
         "retry_allowed": job.state == "FAILED"
         and not job.reconciliation_required
         and job.step == "REVALIDATE",
@@ -178,7 +220,9 @@ def safe_event_detail(event: ProvisioningEvent) -> dict[str, int]:
 
 @router.post("/jobs/{job_id}/retry")
 def retry(
-    job_id: str, op: Operator = Depends(admin), db: Session = Depends(get_db)
+    job_id: str,
+    op: Annotated[Operator, Depends(admin)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, str]:
     try:
         target_id = retry_plan(db, job_id, op.id)
