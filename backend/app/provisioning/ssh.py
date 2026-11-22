@@ -9,6 +9,7 @@ import json
 import re
 import shlex
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -151,8 +152,8 @@ def preflight(target: Target) -> dict[str, str]:
     return parse_preflight(target, result.stdout)
 
 
-AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-dualmode2-ubuntu24.04-amd64.tar.gz"
-AGENT_SHA256 = "cf2bced62d522473af86dd623458835711957dec25d8ab8c0aac501616a3f2c1"
+AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-fullmvp1-ubuntu24.04-amd64.tar.gz"
+AGENT_SHA256 = "a522b93c4e90d5708eef6f663f7a2d4ecc22e566155349b93d8bd77a1ccfe6df"
 
 
 def adapt_installer(source: str) -> str:
@@ -176,15 +177,113 @@ trap 'rm -rf "$secret"' EXIT
     return source
 
 
+INSTALL_PHASES = (
+    "LOCK_ACQUIRED",
+    "IDENTITY_ABSENT",
+    "ARCHIVE_DOWNLOADED",
+    "ARCHIVE_VERIFIED",
+    "ARCHIVE_EXTRACTED",
+    "ADAPTER_READY",
+    "INSTALLER_STARTED",
+)
+CAPTURE_LIMIT = 4096
+
+
+@dataclass(frozen=True)
+class InstallEvidence:
+    """Allowlisted observations, never proof of remote rollback or enrollment."""
+
+    phases: tuple[str, ...] = ()
+    installer_exit_status: int | None = None
+    transport_exit_status: int | None = None
+    outcome: str = "TRANSPORT_FAILED"
+
+
+def _evidence(
+    output: str | bytes | None, status: int | None, outcome: str
+) -> InstallEvidence:
+    """Drop all text except complete fixed records within a bounded prefix."""
+    if isinstance(output, bytes):
+        output = output.decode("ascii", errors="replace")
+    phases: list[str] = []
+    installer_status = None
+    for line in (output or "")[:CAPTURE_LIMIT].splitlines(keepends=True):
+        if not line.endswith("\n"):
+            continue
+        record = line[:-1]
+        if record.startswith("NIMBUSOPS/1 "):
+            value = record[len("NIMBUSOPS/1 ") :]
+            if value in INSTALL_PHASES and value not in phases:
+                phases.append(value)
+            match = re.fullmatch(r"INSTALLER_EXIT ([0-9]{1,3})", value)
+            if match and 0 <= int(match[1]) <= 255:
+                installer_status = int(match[1])
+    return InstallEvidence(tuple(phases), installer_status, status, outcome)
+
+
+class InstallCancelled(KeyboardInterrupt):
+    """Local cancellation stops waiting, not necessarily the remote installer."""
+
+    def __init__(self, evidence: InstallEvidence) -> None:
+        super().__init__("INSTALL_CANCELLED_OUTCOME_UNKNOWN")
+        self.evidence = evidence
+
+
+def _run_install(
+    argv: list[str], *, input: str, timeout: int
+) -> subprocess.CompletedProcess[str]:
+    """Drain stdout with bounded memory; never capture stderr or persist raw text."""
+    captured = bytearray()
+    with subprocess.Popen(
+        argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    ) as process:
+        assert process.stdout is not None and process.stdin is not None
+
+        def drain() -> None:
+            assert process.stdout is not None
+            while chunk := process.stdout.read(1024):
+                captured.extend(chunk[: max(0, CAPTURE_LIMIT - len(captured))])
+
+        reader = threading.Thread(target=drain, daemon=True)
+        reader.start()
+        try:
+            try:
+                process.stdin.write(input.encode("ascii"))
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
+            process.wait(timeout=timeout)
+        except BaseException as exc:
+            process.kill()
+            process.wait()
+            reader.join()
+            if isinstance(exc, subprocess.TimeoutExpired):
+                raise subprocess.TimeoutExpired(
+                    "ssh-install", timeout, output=bytes(captured)
+                ) from None
+            if isinstance(exc, KeyboardInterrupt):
+                raise InstallCancelled(
+                    _evidence(bytes(captured), None, "CANCELLED")
+                ) from None
+            raise
+        reader.join()
+        return subprocess.CompletedProcess(
+            argv, process.returncode, captured.decode("ascii", errors="replace")
+        )
+
+
 class InstallOutcomeUnknown(ValueError):
     """Only the transport exit status is safe; it is not proof of remote rollback."""
 
-    def __init__(self, exit_status: int | None = None) -> None:
+    def __init__(
+        self, exit_status: int | None = None, *, evidence: InstallEvidence | None = None
+    ) -> None:
         super().__init__("INSTALL_OUTCOME_UNKNOWN")
-        self.exit_status = exit_status
+        self.evidence = evidence or InstallEvidence(transport_exit_status=exit_status)
+        self.exit_status = self.evidence.transport_exit_status
 
 
-def install(target: Target, origin: str, token: str) -> None:
+def install(target: Target, origin: str, token: str) -> InstallEvidence:
     """Execute the pinned installer with an explicit noninteractive input adapter.
 
     The verified archive is immutable. Only its two terminal-input lines are
@@ -212,32 +311,56 @@ p.write_text(adapt_installer(p.read_text()))
 """
     script = f"""set +x
 set -eu
+# Only the wrapper can write the protocol channel; installer output is discarded.
+exec 3>&1
+exec >/dev/null 2>&1
 umask 077
 exec 9>/run/nimbusops-agent-install.lock
 flock -n 9 || exit 73
+printf 'NIMBUSOPS/1 LOCK_ACQUIRED\\n' >&3
 test ! -e /var/lib/nimbusops-agent/agent.json
+printf 'NIMBUSOPS/1 IDENTITY_ABSENT\\n' >&3
 IFS= read -r bootstrap
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cd "$work"
 curl --fail --silent --show-error --proto '=https' --tlsv1.2{ca_download} {shlex.quote(origin + '/releases/' + AGENT_RELEASE)} -o agent.tar.gz
+printf 'NIMBUSOPS/1 ARCHIVE_DOWNLOADED\\n' >&3
 printf '%s  %s\\n' {AGENT_SHA256} agent.tar.gz | sha256sum --check --status
+printf 'NIMBUSOPS/1 ARCHIVE_VERIFIED\\n' >&3
 tar -xzf agent.tar.gz
+printf 'NIMBUSOPS/1 ARCHIVE_EXTRACTED\\n' >&3
 python3 -c {shlex.quote(adapter)}
-printf '%s\\n' "$bootstrap" | bash install.sh {shlex.quote(origin)} {shlex.quote(target.hostname)}{ca_install}
+printf 'NIMBUSOPS/1 ADAPTER_READY\\n' >&3
+printf 'NIMBUSOPS/1 INSTALLER_STARTED\\n' >&3
+set +e
+printf '%s\\n' "$bootstrap" | bash install.sh {shlex.quote(origin)} {shlex.quote(target.hostname)}{ca_install} 3>&-
+installer_status=$?
 unset bootstrap
+printf 'NIMBUSOPS/1 INSTALLER_EXIT %s\\n' "$installer_status" >&3
+exit "$installer_status"
 """
     try:
-        result = subprocess.run(
+        result = _run_install(
             ssh_argv(target) + ["sudo -n bash -c " + shlex.quote(script)],
             input=token + "\n",
-            text=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
             timeout=600,
-            check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired as exc:
+        raise InstallOutcomeUnknown(
+            evidence=_evidence(exc.output, None, "TIMED_OUT")
+        ) from None
+    except KeyboardInterrupt as exc:
+        if isinstance(exc, InstallCancelled):
+            raise
+        raise InstallCancelled(InstallEvidence(outcome="CANCELLED")) from None
+    except OSError:
         raise InstallOutcomeUnknown() from None
+    evidence = _evidence(
+        getattr(result, "stdout", None),
+        result.returncode,
+        "TRANSPORT_FAILED" if result.returncode else "COMPLETED",
+    )
     if result.returncode:
-        raise InstallOutcomeUnknown(result.returncode)
+        raise InstallOutcomeUnknown(evidence=evidence)
+    return evidence

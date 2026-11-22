@@ -27,7 +27,15 @@ from ..models.provisioning import (
 )
 from ..services.enrollment import issue_bootstrap_token
 from ..services.provisioning import now_ms, policy_hash
-from .ssh import InstallOutcomeUnknown, Target, install, preflight
+from .ssh import (
+    INSTALL_PHASES,
+    InstallCancelled,
+    InstallEvidence,
+    InstallOutcomeUnknown,
+    Target,
+    install,
+    preflight,
+)
 
 
 def claim_job(db: Session) -> str | None:
@@ -115,6 +123,24 @@ def event(
     )
     job.updated_at = now_ms()
     db.commit()
+
+
+def install_events(
+    db: Session, job: ProvisioningJob, evidence: InstallEvidence
+) -> None:
+    """Persist only the closed protocol vocabulary and bounded numeric facts."""
+    for phase in dict.fromkeys(evidence.phases):
+        if phase in INSTALL_PHASES:
+            event(db, job, "INSTALL_PHASE_" + phase)
+    detail: dict[str, int] = {}
+    for key, value in (
+        ("installer_exit_status", evidence.installer_exit_status),
+        ("transport_exit_status", evidence.transport_exit_status),
+    ):
+        if type(value) is int and 0 <= value <= 255:
+            detail[key] = value
+    if evidence.outcome in {"COMPLETED", "TIMED_OUT", "TRANSPORT_FAILED", "CANCELLED"}:
+        event(db, job, "INSTALL_" + evidence.outcome, detail or None)
 
 
 @contextmanager
@@ -209,10 +235,21 @@ def _run_once(db: Session, targets: dict[str, Target], origin: str) -> None:
             job.plan_json = json.dumps(plan)
             job.step = "INSTALL_ADMITTED"
             event(db, job, "INSTALL_ADMITTED")
-            install(target, origin, plaintext)
-            del plaintext
+            try:
+                evidence = install(target, origin, plaintext)
+            finally:
+                del plaintext
+            # Legacy three-argument install adapters/mocks may return None.
+            if isinstance(evidence, InstallEvidence):
+                install_events(db, job, evidence)
             job.state = "VERIFYING"
             event(db, job, "WAITING_FOR_TELEMETRY")
+        except InstallCancelled as exc:
+            job.state = "VERIFYING"
+            job.reason_code = "RECONCILIATION_REQUIRED"
+            install_events(db, job, exc.evidence)
+            event(db, job, "RECONCILIATION_REQUIRED")
+            raise
         except (ValueError, ApiError) as exc:
             if job.step == "REVALIDATE" and "bootstrap_token_id" not in json.loads(
                 job.plan_json
@@ -225,16 +262,8 @@ def _run_once(db: Session, targets: dict[str, Target], origin: str) -> None:
             else:
                 job.reason_code = "RECONCILIATION_REQUIRED"
                 job.state = "VERIFYING"
-                if (
-                    isinstance(exc, InstallOutcomeUnknown)
-                    and exc.exit_status is not None
-                ):
-                    event(
-                        db,
-                        job,
-                        "INSTALL_TRANSPORT_FAILED",
-                        {"transport_exit_status": exc.exit_status},
-                    )
+                if isinstance(exc, InstallOutcomeUnknown):
+                    install_events(db, job, exc.evidence)
                 event(db, job, "RECONCILIATION_REQUIRED")
         except Exception:
             # Do not log provider output/credentials. A committed admission is

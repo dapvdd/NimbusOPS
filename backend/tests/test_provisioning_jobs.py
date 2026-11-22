@@ -224,3 +224,67 @@ def test_stale_retry_cannot_release_replacement_owner(client, db_session):
 
     # A stale generation must not match even when all other fields agree.
     assert release_for_retry(db_session, "missing", "old-job", 1) is False
+
+
+@pytest.mark.parametrize(
+    "outcome", ["TIMED_OUT", "TRANSPORT_FAILED", "CANCELLED", "COMPLETED"]
+)
+def test_worker_persists_redacted_evidence_without_redispatch(
+    client, db_session, monkeypatch, outcome
+):
+    import json
+    from sqlalchemy import select
+    from backend.app.provisioning import ssh, worker
+    from backend.app.models.provisioning import ProvisioningEvent
+    from backend.app.services.provisioning import save_plan, confirm_plan
+
+    op = Operator(username="evidence-admin", password_hash="unused", role="ADMIN")
+    db_session.add(op)
+    db_session.commit()
+    target = ssh.Target(
+        "test", "192.0.2.10", "installer", "new-vm", "/key", "/known", "a" * 32
+    )
+    facts = {"hostname": "new-vm"}
+    plan = save_plan(db_session, op.id, target, facts)
+    job = confirm_plan(db_session, op.id, target, plan.id, plan.plan_hash)
+    monkeypatch.setattr(worker, "preflight", lambda _: facts)
+    evidence = ssh.InstallEvidence(
+        ("LOCK_ACQUIRED", "ARCHIVE_VERIFIED"),
+        42 if outcome == "TRANSPORT_FAILED" else None,
+        255 if outcome == "TRANSPORT_FAILED" else None,
+        outcome,
+    )
+    calls = []
+
+    def dispatch(*args):
+        calls.append(1)
+        if outcome == "CANCELLED":
+            raise ssh.InstallCancelled(evidence)
+        if outcome != "COMPLETED":
+            raise ssh.InstallOutcomeUnknown(evidence=evidence)
+        return evidence
+
+    monkeypatch.setattr(worker, "install", dispatch)
+    if outcome == "CANCELLED":
+        with pytest.raises(ssh.InstallCancelled):
+            worker.run_once(db_session, {"test": target}, "https://demo.example")
+    else:
+        worker.run_once(db_session, {"test": target}, "https://demo.example")
+    worker.run_once(db_session, {"test": target}, "https://demo.example")
+    db_session.refresh(job)
+    assert calls == [1]
+    assert job.state == "VERIFYING"
+    assert job.reconciliation_required
+    events = db_session.scalars(
+        select(ProvisioningEvent).where(ProvisioningEvent.job_id == job.id)
+    ).all()
+    codes = [e.code for e in events]
+    assert "INSTALL_PHASE_LOCK_ACQUIRED" in codes
+    assert "INSTALL_PHASE_ARCHIVE_VERIFIED" in codes
+    assert f"INSTALL_{outcome}" in codes
+    if outcome == "TRANSPORT_FAILED":
+        assert any(
+            json.loads(e.safe_detail_json or "{}").get("installer_exit_status") == 42
+            for e in events
+        )
+    assert "secret" not in repr([(e.code, e.safe_detail_json) for e in events])
