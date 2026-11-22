@@ -6,9 +6,9 @@
  * application stopped, application running, unknown result.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { api, ApiFailure } from "../api/client";
-import { useAdmin } from '../auth/Session';
+import { useAdmin, useSession } from '../auth/Session';
 import type {
   ManagedApp,
   ManagedAppListResponse,
@@ -22,6 +22,121 @@ const TERMINAL: Operation["status"][] = ["SUCCEEDED", "FAILED", "UNKNOWN"];
 
 function isTerminal(status: Operation["status"]): boolean {
   return TERMINAL.includes(status);
+}
+
+type Admission = { id: string | null; pending: boolean; operation: Operation | null; persistenceError: string | null; readFailed: boolean };
+const admissions = new Map<string, Admission>();
+const admissionListeners = new Set<() => void>();
+const emptyAdmission: Admission = { id: null, pending: false, operation: null, persistenceError: null, readFailed: false };
+const pendingMarker = "!admission-pending";
+function getAdmission(key: string | null): Admission {
+  if (!key) return emptyAdmission;
+  const cached = admissions.get(key);
+  if (cached) return cached;
+  let record = { ...emptyAdmission };
+  try {
+    const saved = window.sessionStorage.getItem(key);
+    record = { ...record, id: saved === pendingMarker ? null : saved, pending: saved === pendingMarker };
+  } catch {
+    record = { ...record, readFailed: true, persistenceError: "Cannot read saved admission references. Writes are blocked; restore tab storage access and reload before attempting recovery." };
+  }
+  admissions.set(key, record);
+  return record;
+}
+function updateAdmission(key: string, patch: Partial<Admission>, persist = false) {
+  let record = { ...getAdmission(key), ...patch };
+  if (persist) {
+    try {
+      if (record.id || record.pending) window.sessionStorage.setItem(key, record.id ?? pendingMarker);
+      else window.sessionStorage.removeItem(key);
+    } catch {
+      record = { ...record, persistenceError: "Operation ID cannot be saved in this tab. Keep this page open and copy the ID before leaving; do not repeat the write." };
+    }
+  }
+  admissions.set(key, record);
+  admissionListeners.forEach(notify => notify());
+}
+function subscribeAdmissions(notify: () => void) {
+  admissionListeners.add(notify);
+  return () => { admissionListeners.delete(notify); };
+}
+
+// Shared tab state outlives components, including a POST still awaiting admission.
+function useAdmittedOperation(scope: string, onTerminal: () => void, observeOnly = false) {
+  const operatorId = useSession()?.user?.operator_id;
+  const admin = useAdmin();
+  const storageKey = admin && operatorId ? `nimbusops:admission:v1:${JSON.stringify([operatorId, scope])}` : null;
+  const record = useSyncExternalStore(subscribeAdmissions, () => getAdmission(storageKey));
+  const { id, operation, persistenceError } = record;
+  const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [checking, setChecking] = useState(false);
+  useEffect(() => {
+    setError(null);
+    setChecking(false);
+  }, [storageKey]);
+  const admit = (operationId: string) => {
+    if (storageKey) updateAdmission(storageKey, { id: operationId, pending: false, operation: null }, true);
+  };
+  const begin = () => {
+    if (!storageKey) return false;
+    const current = getAdmission(storageKey);
+    if (current.pending || current.readFailed || (current.id && !["SUCCEEDED", "FAILED"].includes(current.operation?.status ?? ""))) return false;
+    updateAdmission(storageKey, { pending: true, id: null, operation: null }, true);
+    return true;
+  };
+  const reject = () => {
+    if (storageKey) updateAdmission(storageKey, { pending: false }, true);
+  };
+  useEffect(() => {
+    if (!id || !storageKey || observeOnly) return;
+    let alive = true;
+    let timer: number | undefined;
+    const check = async () => {
+      setChecking(true);
+      try {
+        const next = await api.getOperation(id);
+        if (!alive) return;
+        updateAdmission(storageKey, { operation: next });
+        setError(null);
+        if (isTerminal(next.status)) {
+          onTerminal();
+          return;
+        }
+      } catch (err) {
+        if (!alive) return;
+        setError(err instanceof ApiFailure ? err.message : "Operation lookup failed");
+      } finally {
+        if (alive) setChecking(false);
+      }
+      if (alive) timer = window.setTimeout(check, 2_000);
+    };
+    void check();
+    return () => {
+      alive = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [id, storageKey, revision, onTerminal, observeOnly]);
+  const unresolved = record.pending || record.readFailed || (id !== null && (!operation || !["SUCCEEDED", "FAILED"].includes(operation.status)));
+  return { id, operation, error: storageKey ? error : null, persistenceError, pending: record.pending, checking, unresolved, admit, begin, reject, recheck: () => setRevision(value => value + 1) };
+}
+
+function AdmissionNotice({ tracking }: { tracking: ReturnType<typeof useAdmittedOperation> }) {
+  if (!tracking.id && !tracking.persistenceError && !tracking.pending) return null;
+  return (
+    <div className="mt-3 space-y-2 text-xs">
+      {tracking.pending && <p>Admission pending or unverified. Do not repeat the write.</p>}
+      {tracking.id && <p>Request admitted — operation <span className="font-mono break-all">{tracking.id}</span></p>}
+      {(tracking.error || !tracking.operation || tracking.operation.status === "UNKNOWN") && (
+        <p className="text-amber-400">Result is unverified. Do not repeat the write; inspect/recheck this operation first.</p>
+      )}
+      {tracking.error && <p role="alert" className="text-signal-bad">{tracking.error}</p>}
+      {tracking.persistenceError && <p role="alert" className="text-signal-bad">{tracking.persistenceError}</p>}
+      <button onClick={tracking.recheck} disabled={tracking.checking || !tracking.id} className="rounded-md border border-ink-600 px-3 py-1.5 disabled:opacity-40">
+        {tracking.checking ? "Checking operation…" : "Recheck operation (read-only)"}
+      </button>
+    </div>
+  );
 }
 
 function AppStateBadge({ app }: { app: ManagedApp }) {
@@ -77,16 +192,20 @@ function AppRow({ app, onAction }: { app: ManagedApp; onAction: () => void }) {
   const admin = useAdmin();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const tracking = useAdmittedOperation(`lifecycle:${app.deployment_id}`, onAction);
+  const deploymentTracking = useAdmittedOperation(`deploy:${app.host_id}:${app.template_key}`, onAction, true);
   const op = app.last_operation;
-  const inFlight = op !== null && !isTerminal(op.status);
+  const inFlight = (op !== null && !["SUCCEEDED", "FAILED"].includes(op.status)) || deploymentTracking.unresolved;
 
   const act = async (kind: "start" | "stop") => {
+    if (!admin || busy || tracking.unresolved || inFlight || !tracking.begin()) return;
     setBusy(kind);
     setError(null);
     try {
-      await (kind === "start" ? api.startApp(app.deployment_id) : api.stopApp(app.deployment_id));
-      onAction();
+      const response = await (kind === "start" ? api.startApp(app.deployment_id) : api.stopApp(app.deployment_id));
+      tracking.admit(response.operation_id);
     } catch (err) {
+      tracking.reject();
       setError(err instanceof ApiFailure ? err.message : "Request failed");
     } finally {
       setBusy(null);
@@ -127,20 +246,23 @@ function AppRow({ app, onAction }: { app: ManagedApp; onAction: () => void }) {
       </div>
 
       {error && <p className="mt-2 text-xs text-signal-bad" role="alert">{error}</p>}
+      <AdmissionNotice tracking={tracking} />
+      {deploymentTracking.unresolved && <p className="mt-2 text-xs text-amber-400">Deployment admission is unverified. Lifecycle writes are blocked; inspect the deployment operation first.</p>}
+      {tracking.operation && <p className="mt-2 text-xs">Last checked operation: {tracking.operation.status}</p>}
 
       <div className="mt-3 flex flex-wrap gap-2">
         {admin && (
           <>
             <button
               onClick={() => act("start")}
-              disabled={inFlight || busy !== null || app.container_state === "RUNNING"}
+              disabled={inFlight || tracking.unresolved || busy !== null || app.container_state === "RUNNING"}
               className="rounded-md border border-ink-600 bg-ink-800 px-3 py-1.5 text-xs text-ink-100 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {busy === "start" ? "Starting…" : "Start"}
             </button>
             <button
               onClick={() => act("stop")}
-              disabled={inFlight || busy !== null || app.container_state !== "RUNNING"}
+              disabled={inFlight || tracking.unresolved || busy !== null || app.container_state !== "RUNNING"}
               className="rounded-md border border-ink-600 bg-ink-800 px-3 py-1.5 text-xs text-ink-100 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {busy === "stop" ? "Stopping…" : "Stop"}
@@ -167,7 +289,6 @@ export default function Applications({ selectedHostId }: { selectedHostId?: stri
   const [error, setError] = useState<ApiFailure | null>(null);
   const [loading, setLoading] = useState(true);
   const [deploying, setDeploying] = useState(false);
-  const [activeOp, setActiveOp] = useState<Operation | null>(null);
   const [deployError, setDeployError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -188,48 +309,24 @@ export default function Applications({ selectedHostId }: { selectedHostId?: stri
     }
   }, [hostId]);
 
+  const tracking = useAdmittedOperation(`deploy:${hostId}:nginx-demo`, load);
+  const activeOp = tracking.operation;
+
   useEffect(() => {
     load();
     const id = window.setInterval(load, 15_000);
     return () => window.clearInterval(id);
   }, [load]);
 
-  // Poll the active operation until terminal (recursive timeout: survives
-  // unmount cleanly and starts promptly).
-  useEffect(() => {
-    if (!activeOp || isTerminal(activeOp.status)) return;
-    let alive = true;
-    let timer: number | undefined;
-    const tick = async () => {
-      try {
-        const op = await api.getOperation(activeOp.id);
-        if (!alive) return;
-        setActiveOp(op);
-        if (isTerminal(op.status)) {
-          load();
-          return;
-        }
-      } catch {
-        // transient; keep polling until terminal or unmount
-      }
-      if (alive) timer = window.setTimeout(tick, 2_000);
-    };
-    timer = window.setTimeout(tick, 500);
-    return () => {
-      alive = false;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [activeOp, load]);
-
   const deployAction = async () => {
-    if (!hostId) return;
+    if (!admin || !hostId || deploying || tracking.unresolved || !tracking.begin()) return;
     setDeploying(true);
     setDeployError(null);
     try {
       const resp = await api.deploy(hostId, "nginx-demo");
-      const op = await api.getOperation(resp.operation_id);
-      setActiveOp(op);
+      tracking.admit(resp.operation_id);
     } catch (err) {
+      tracking.reject();
       setDeployError(err instanceof ApiFailure ? err.message : "Deploy request failed");
     } finally {
       setDeploying(false);
@@ -294,7 +391,7 @@ export default function Applications({ selectedHostId }: { selectedHostId?: stri
           </label>
           <button
             onClick={deployAction}
-            disabled={deploying || !hostId || selectedHostRevoked}
+            disabled={deploying || tracking.unresolved || !hostId || selectedHostRevoked}
             className="rounded-md bg-signal-info px-4 py-1.5 text-sm font-medium text-ink-950 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {deploying ? "Requesting…" : "Deploy"}
@@ -312,6 +409,7 @@ export default function Applications({ selectedHostId }: { selectedHostId?: stri
           )
         )}
         {deployError && <p className="mt-2 text-xs text-signal-bad" role="alert">{deployError}</p>}
+        <AdmissionNotice tracking={tracking} />
 
         {activeOp && (
           <div className="mt-3 rounded-md border border-ink-600 bg-ink-900 p-3" data-testid="operation-panel">
