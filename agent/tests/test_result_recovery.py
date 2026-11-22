@@ -11,6 +11,8 @@ executor returning and the write-ahead record can still requeue the operation.
 
 from __future__ import annotations
 
+import pytest
+
 from agent.nimbusops_agent.worker import CommandWorker, FileOutcomeStore
 
 COMMAND = {
@@ -50,7 +52,10 @@ class NoopExecutor:
 
     def execute(self, command):
         self.executed.append(command["id"])
-        return {"status": "SUCCEEDED", "result": {"container_state": "RUNNING", "http_ok": True}}
+        return {
+            "status": "SUCCEEDED",
+            "result": {"container_state": "RUNNING", "http_ok": True},
+        }
 
 
 class InMemoryOutcomeStore:
@@ -71,8 +76,11 @@ class InMemoryOutcomeStore:
 
 def _worker(http, executor, store):
     return CommandWorker(
-        http=http, executor=executor, outcome_store=store,
-        poll_retry=3, sleep_fn=lambda _: None,
+        http=http,
+        executor=executor,
+        outcome_store=store,
+        poll_retry=3,
+        sleep_fn=lambda _: None,
     )
 
 
@@ -122,7 +130,9 @@ def test_redelivered_operation_resubmits_stored_result_without_reexecuting():
 
 def test_worker_restart_recovers_pending_outcome_without_reexecuting():
     store = InMemoryOutcomeStore()
-    http1 = FakeHttp(polls=[{"commands": [dict(COMMAND)]}], results=[(False, "loss")] * 3)
+    http1 = FakeHttp(
+        polls=[{"commands": [dict(COMMAND)]}], results=[(False, "loss")] * 3
+    )
     ex1 = NoopExecutor()
     _worker(http1, ex1, store).poll_once()
     assert "op-recovery-1" in store.pending()
@@ -151,7 +161,9 @@ def test_pending_outcome_is_written_before_delivery_is_attempted():
     http = CheckHttp(polls=[{"commands": [dict(COMMAND)]}])
     _worker(http, NoopExecutor(), store).poll_once()
 
-    assert seen_at_submit and all(seen_at_submit), "write-ahead record missing at submit time"
+    assert seen_at_submit and all(
+        seen_at_submit
+    ), "write-ahead record missing at submit time"
 
 
 def test_file_outcome_store_survives_new_instance(tmp_path):
@@ -165,3 +177,23 @@ def test_file_outcome_store_survives_new_instance(tmp_path):
 
     second.remove("op-file-1")
     assert FileOutcomeStore(path).pending() == {}
+
+
+@pytest.mark.parametrize("content", ["{broken", "[]", '{"op-1": {"unexpected": true}}'])
+def test_corrupt_outcome_journal_fails_closed(tmp_path, content):
+    path = tmp_path / "pending_results.json"
+    path.write_text(content, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="OUTCOME_JOURNAL_UNREADABLE"):
+        FileOutcomeStore(path)
+    assert path.read_text(encoding="utf-8") == content
+
+
+def test_unreadable_outcome_journal_fails_closed(tmp_path, monkeypatch):
+    path = tmp_path / "pending_results.json"
+
+    def denied(*args, **kwargs):
+        raise PermissionError("sensitive filesystem detail")
+
+    monkeypatch.setattr(type(path), "read_text", denied)
+    with pytest.raises(RuntimeError, match="^OUTCOME_JOURNAL_UNREADABLE$"):
+        FileOutcomeStore(path)

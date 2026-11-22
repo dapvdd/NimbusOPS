@@ -5,8 +5,8 @@ export interface InstallCommands {
 }
 
 /** Immutable demo release; update only together with rebuilt artifact and digest. */
-export const AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-dualmode2-ubuntu24.04-amd64.tar.gz";
-export const AGENT_SHA256 = "cf2bced62d522473af86dd623458835711957dec25d8ab8c0aac501616a3f2c1";
+export const AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-fullmvp1-ubuntu24.04-amd64.tar.gz";
+export const AGENT_SHA256 = "a522b93c4e90d5708eef6f663f7a2d4ecc22e566155349b93d8bd77a1ccfe6df";
 
 export function verifiedInstallCommand(origin: string, hostname: string, reenroll = false, caBundle?: string): string {
   if (caBundle !== undefined && (!/^\/[a-zA-Z0-9_./-]+$/.test(caBundle) || caBundle.split("/").includes(".."))) {

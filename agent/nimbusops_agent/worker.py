@@ -34,8 +34,11 @@ import os
 import pathlib
 import tempfile
 import time
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
+
+JsonObject = dict[str, Any]
 
 logger = logging.getLogger("nimbusops.agent.worker")
 
@@ -47,17 +50,19 @@ class WorkerOutcome(Enum):
 
 
 class CommandHttp(Protocol):
-    def poll(self) -> dict: ...
+    def poll(self) -> JsonObject: ...
 
-    def submit_result(self, operation_id: str, payload: dict) -> tuple[bool, str]: ...
+    def submit_result(
+        self, operation_id: str, payload: JsonObject
+    ) -> tuple[bool, str]: ...
 
 
 class OutcomeStore(Protocol):
     """Durable journal of outcomes produced but not yet acknowledged."""
 
-    def pending(self) -> dict[str, dict]: ...
+    def pending(self) -> dict[str, JsonObject]: ...
 
-    def put(self, operation_id: str, result: dict) -> None: ...
+    def put(self, operation_id: str, result: JsonObject) -> None: ...
 
     def remove(self, operation_id: str) -> None: ...
 
@@ -76,25 +81,28 @@ class SenderCommandAdapter:
     @property
     def docker_enabled(self) -> bool | None:
         """None means the server has not told us yet: treat as disabled."""
-        return getattr(self._sender, "docker_enabled", None)
+        value = getattr(self._sender, "docker_enabled", None)
+        return value if isinstance(value, bool) else None
 
-    def poll(self) -> dict:
-        return self._sender.poll_commands()
+    def poll(self) -> JsonObject:
+        return cast(JsonObject, self._sender.poll_commands())
 
-    def submit_result(self, operation_id: str, payload: dict) -> tuple[bool, str]:
-        return self._sender.submit_command_result(operation_id, payload)
+    def submit_result(self, operation_id: str, payload: JsonObject) -> tuple[bool, str]:
+        return cast(
+            tuple[bool, str], self._sender.submit_command_result(operation_id, payload)
+        )
 
 
 class InMemoryOutcomeStore:
     """Non-durable default for callers that do not supply a journal."""
 
     def __init__(self) -> None:
-        self._data: dict[str, dict] = {}
+        self._data: dict[str, JsonObject] = {}
 
-    def pending(self) -> dict[str, dict]:
+    def pending(self) -> dict[str, JsonObject]:
         return dict(self._data)
 
-    def put(self, operation_id: str, result: dict) -> None:
+    def put(self, operation_id: str, result: JsonObject) -> None:
         self._data[operation_id] = result
 
     def remove(self, operation_id: str) -> None:
@@ -113,22 +121,26 @@ class FileOutcomeStore:
         self._path = pathlib.Path(path)
         self._data = self._load()
 
-    def _load(self) -> dict[str, dict]:
+    def _load(self) -> dict[str, JsonObject]:
         try:
             raw = self._path.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError, ValueError):
+        except FileNotFoundError:
             return {}
+        except (OSError, ValueError):
+            raise RuntimeError("OUTCOME_JOURNAL_UNREADABLE") from None
         try:
             data = json.loads(raw)
         except (ValueError, TypeError):
-            return {}
+            raise RuntimeError("OUTCOME_JOURNAL_UNREADABLE") from None
         if not isinstance(data, dict):
-            return {}
-        return {
-            str(key): value
-            for key, value in data.items()
-            if isinstance(value, dict) and "status" in value
-        }
+            # A corrupt persisted journal is an operational failure, not a caller type error.
+            raise RuntimeError("OUTCOME_JOURNAL_UNREADABLE")  # noqa: TRY004
+        if any(
+            not isinstance(value, dict) or "status" not in value
+            for value in data.values()
+        ):
+            raise RuntimeError("OUTCOME_JOURNAL_UNREADABLE")
+        return cast(dict[str, JsonObject], data)
 
     def _persist(self) -> None:
         payload = json.dumps(self._data, sort_keys=True)
@@ -139,7 +151,7 @@ class FileOutcomeStore:
         tmp = pathlib.Path(tmp_name)
         try:
             try:
-                os.fchmod(fd, 0o600)  # type: ignore[attr-defined]
+                os.fchmod(fd, 0o600)
             except (AttributeError, OSError, NotImplementedError):
                 pass
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -158,10 +170,10 @@ class FileOutcomeStore:
                 pass
             raise
 
-    def pending(self) -> dict[str, dict]:
+    def pending(self) -> dict[str, JsonObject]:
         return dict(self._data)
 
-    def put(self, operation_id: str, result: dict) -> None:
+    def put(self, operation_id: str, result: JsonObject) -> None:
         self._data[operation_id] = result
         self._persist()
 
@@ -178,7 +190,7 @@ class CommandWorker:
         executor: Any,
         poll_retry: int = 3,
         retry_delay: float = 1.0,
-        sleep_fn=time.sleep,
+        sleep_fn: Callable[[float], None] = time.sleep,
         outcome_store: OutcomeStore | None = None,
     ) -> None:
         self._http = http
@@ -234,7 +246,7 @@ class CommandWorker:
 
     # ------------------------------------------------------------- internals
 
-    def _poll_with_retry(self) -> list[dict] | None:
+    def _poll_with_retry(self) -> list[JsonObject] | None:
         last_err: Exception | None = None
         for attempt in range(1, self._poll_retry + 1):
             try:
@@ -261,7 +273,7 @@ class CommandWorker:
                 delivered_any = True
         return delivered_any
 
-    def _reconcile_redelivery(self, op_id: str, cmd: dict) -> None:
+    def _reconcile_redelivery(self, op_id: str, cmd: JsonObject) -> None:
         """Resubmit the stored outcome using the newest claim generation."""
         result = dict(self._outcomes[op_id])
         generation = cmd.get("claim_generation")
@@ -274,7 +286,7 @@ class CommandWorker:
             self._discard(op_id)
 
     @staticmethod
-    def _build_result(cmd: dict, payload: dict) -> dict:
+    def _build_result(cmd: JsonObject, payload: JsonObject) -> JsonObject:
         result = {
             "status": payload.get("status", "UNKNOWN"),
             "result": payload.get("result"),
@@ -287,7 +299,7 @@ class CommandWorker:
             result["claim_generation"] = cmd["claim_generation"]
         return result
 
-    def _deliver(self, op_id: str, result: dict) -> bool:
+    def _deliver(self, op_id: str, result: JsonObject) -> bool:
         """Bounded, idempotent submission. True once the server acknowledges."""
         for attempt in range(1, self._poll_retry + 1):
             try:
@@ -300,14 +312,18 @@ class CommandWorker:
                 return True
             logger.warning(
                 "result for op %s delivery failed (attempt %d/%d): %s",
-                op_id, attempt, self._poll_retry, detail,
+                op_id,
+                attempt,
+                self._poll_retry,
+                detail,
             )
             if attempt < self._poll_retry:
                 self._sleep(self._retry_delay)
         logger.error(
             "result for op %s could not be delivered after %d attempts; "
             "kept in pending journal for a later cycle",
-            op_id, self._poll_retry,
+            op_id,
+            self._poll_retry,
         )
         return False
 

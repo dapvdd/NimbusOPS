@@ -21,7 +21,8 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import httpx
 
@@ -109,7 +110,9 @@ class DockerExecutor:
             return 127, "", f"docker CLI not found: {exc}"
         return proc.returncode, proc.stdout, proc.stderr
 
-    def _run(self, argv: list[str], timeout: float | None = None) -> tuple[int, str, str]:
+    def _run(
+        self, argv: list[str], timeout: float | None = None
+    ) -> tuple[int, str, str]:
         try:
             return self._runner(argv, timeout if timeout is not None else self._timeout)
         except FileNotFoundError as exc:
@@ -123,7 +126,9 @@ class DockerExecutor:
             ["docker", "version", "--format", "{{.Server.Version}}"], timeout=10.0
         )
         if code != 0:
-            raise DockerUnavailable(f"docker version failed: code={code} {err.strip()[:200]}")
+            raise DockerUnavailable(
+                f"docker version failed: code={code} {err.strip()[:200]}"
+            )
         if not out.strip():
             raise DockerUnavailable("docker version returned no server version")
         self._available = True
@@ -141,11 +146,19 @@ class DockerExecutor:
             if op_type == "DEPLOY":
                 return self._deploy(template, deployment_id)
             if op_type == "START":
-                return self._start(template.get("container_name", ""), deployment_id, template.get("host_port"))
+                return self._start(
+                    template.get("container_name", ""),
+                    deployment_id,
+                    template.get("host_port"),
+                )
             if op_type == "STOP":
                 return self._stop(template.get("container_name", ""), deployment_id)
             if op_type == "RESTART":
-                return self._restart(template.get("container_name", ""), deployment_id, template.get("host_port"))
+                return self._restart(
+                    template.get("container_name", ""),
+                    deployment_id,
+                    template.get("host_port"),
+                )
             if op_type == "INVENTORY":
                 return self._inventory()
             raise ManagedResourceError(f"op_type {op_type!r} is not approved")
@@ -175,12 +188,12 @@ class DockerExecutor:
                 "error_code": "TIMEOUT",
                 "error_message": str(exc)[:512] or "docker command timed out",
             }
-        except Exception as exc:  # unexpected: never crash the loop
+        except Exception as exc:  # noqa: BLE001 - executor boundary must return UNKNOWN
             return {
                 "status": "UNKNOWN",
                 "error_code": "UNKNOWN",
                 "error_message": f"{type(exc).__name__}: {exc}"[:512],
-        }
+            }
 
     # ---------------------------------------------------------- ownership
 
@@ -196,9 +209,15 @@ class DockerExecutor:
         )
         if code != 0:
             lowered = (err or "").lower()
-            if "no such object" in lowered or "no such container" in lowered or "not found" in lowered:
+            if (
+                "no such object" in lowered
+                or "no such container" in lowered
+                or "not found" in lowered
+            ):
                 return None
-            raise VerifyFailed(f"container inspection failed for {name!r} (exit={code})")
+            raise VerifyFailed(
+                f"container inspection failed for {name!r} (exit={code})"
+            )
         raw = (out or "").strip()
         if not raw or raw == "null":
             return {}
@@ -209,7 +228,9 @@ class DockerExecutor:
                 f"container inspection returned unparseable metadata for {name!r}"
             ) from exc
         if not isinstance(labels, dict):
-            raise VerifyFailed(f"container inspection returned unexpected metadata for {name!r}")
+            raise VerifyFailed(
+                f"container inspection returned unexpected metadata for {name!r}"
+            )
         return {str(k): str(v) for k, v in labels.items()}
 
     def _assert_owned(self, name: str, deployment_id: str) -> None:
@@ -220,9 +241,13 @@ class DockerExecutor:
         """
         labels = self._inspect_labels(name)
         if labels is None:
-            raise ManagedResourceError(f"container {name!r} does not exist on this host")
+            raise ManagedResourceError(
+                f"container {name!r} does not exist on this host"
+            )
         if labels.get("nimbusops.managed") != "true":
-            raise ManagedResourceError(f"container {name!r} is not managed by NimbusOps")
+            raise ManagedResourceError(
+                f"container {name!r} is not managed by NimbusOps"
+            )
         if labels.get("nimbusops.deployment") != deployment_id:
             raise ManagedResourceError(
                 f"container {name!r} belongs to a different deployment (ownership mismatch)"
@@ -235,9 +260,13 @@ class DockerExecutor:
         image = template.get("image", "")
         name = template.get("container_name", "")
         if key != "nginx-demo" or image not in APPROVED_IMAGES:
-            raise ManagedResourceError(f"template {key!r} / image {image!r} not approved")
+            raise ManagedResourceError(
+                f"template {key!r} / image {image!r} not approved"
+            )
         if not name.startswith(MANAGED_PREFIX):
-            raise ManagedResourceError(f"container name {name!r} outside managed prefix")
+            raise ManagedResourceError(
+                f"container name {name!r} outside managed prefix"
+            )
 
         # Validation first: unapproved scope never touches Docker at all.
         self.ensure_available()
@@ -278,16 +307,23 @@ class DockerExecutor:
         #    All values are fixed here — never interpolated from the payload
         #    beyond the validated numeric port/name/deployment id.
         run_argv = [
-            "docker", "run", "-d",
-            "--name", name,
-            "--label", LABEL_MANAGED,
-            "--label", f"{LABEL_DEPLOYMENT}={deployment_id}",
-            "--restart", "no",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "--label",
+            LABEL_MANAGED,
+            "--label",
+            f"{LABEL_DEPLOYMENT}={deployment_id}",
+            "--restart",
+            "no",
             f"--cpus={CPU_LIMIT}",
             f"--memory={MEMORY_LIMIT}",
             f"--memory-swap={MEMORY_SWAP_LIMIT}",
             f"--pids-limit={PIDS_LIMIT}",
-            "-p", f"{PUBLISH_HOST}:{host_port}:{int(template.get('container_port', 80))}",
+            "-p",
+            f"{PUBLISH_HOST}:{host_port}:{int(template.get('container_port', 80))}",
             image,
         ]
         code, _, err = self._run(run_argv)
@@ -308,7 +344,9 @@ class DockerExecutor:
         # 3. Verify the container is actually running (evidence, not trust).
         return self._verify_running(name, deployment_id, host_port)
 
-    def _verify_running(self, name: str, deployment_id: str, host_port: int | None) -> dict[str, Any]:
+    def _verify_running(
+        self, name: str, deployment_id: str, host_port: int | None
+    ) -> dict[str, Any]:
         code, out, _ = self._run(
             ["docker", "ps", "--filter", f"name=^{name}$", "--format", "{{.Status}}"]
         )
@@ -342,7 +380,9 @@ class DockerExecutor:
         """Public wrapper: run the approved DEPLOY operation."""
         return self._deploy(template, deployment_id)
 
-    def start(self, name: str, deployment_id: str, host_port: int | None = None) -> dict[str, Any]:
+    def start(
+        self, name: str, deployment_id: str, host_port: int | None = None
+    ) -> dict[str, Any]:
         """Public wrapper: start a managed container and verify."""
         return self._start(name, deployment_id, host_port)
 
@@ -350,9 +390,13 @@ class DockerExecutor:
         """Public wrapper: stop a managed container and verify."""
         return self._stop(name, deployment_id)
 
-    def _start(self, name: str, deployment_id: str, host_port: int | None = None) -> dict[str, Any]:
+    def _start(
+        self, name: str, deployment_id: str, host_port: int | None = None
+    ) -> dict[str, Any]:
         if not name.startswith(MANAGED_PREFIX):
-            raise ManagedResourceError(f"container name {name!r} outside managed prefix")
+            raise ManagedResourceError(
+                f"container name {name!r} outside managed prefix"
+            )
         self.ensure_available()
         self._assert_owned(name, deployment_id)
         code, _, err = self._run(["docker", "start", name])
@@ -366,7 +410,9 @@ class DockerExecutor:
 
     def _stop(self, name: str, deployment_id: str) -> dict[str, Any]:
         if not name.startswith(MANAGED_PREFIX):
-            raise ManagedResourceError(f"container name {name!r} outside managed prefix")
+            raise ManagedResourceError(
+                f"container name {name!r} outside managed prefix"
+            )
         self.ensure_available()
         self._assert_owned(name, deployment_id)
         code, _, err = self._run(["docker", "stop", name])
@@ -377,7 +423,15 @@ class DockerExecutor:
                 "error_message": f"stop failed: {err.strip()[:300]}",
             }
         code, out, _ = self._run(
-            ["docker", "ps", "-a", "--filter", f"name=^{name}$", "--format", "{{.Status}}"]
+            [
+                "docker",
+                "ps",
+                "-a",
+                "--filter",
+                f"name=^{name}$",
+                "--format",
+                "{{.Status}}",
+            ]
         )
         # RC2 F06: an inspection failure or an absent row proves nothing. It
         # must not become SUCCEEDED/EXITED evidence.
@@ -407,10 +461,14 @@ class DockerExecutor:
 
     # ------------------------------------------------------------ probe
 
-    def _restart(self, name: str, deployment_id: str, host_port: int | None = None) -> dict[str, Any]:
+    def _restart(
+        self, name: str, deployment_id: str, host_port: int | None = None
+    ) -> dict[str, Any]:
         """Phase 5: restart a managed container and verify it comes back."""
         if not name.startswith(MANAGED_PREFIX):
-            raise ManagedResourceError(f"container name {name!r} outside managed prefix")
+            raise ManagedResourceError(
+                f"container name {name!r} outside managed prefix"
+            )
         self.ensure_available()
         self._assert_owned(name, deployment_id)
         code, _, err = self._run(["docker", "restart", name])
@@ -458,14 +516,16 @@ class DockerExecutor:
                     k, _, v = pair.partition("=")
                     labels[k.strip()] = v.strip()
             managed = labels.get("nimbusops.managed") == "true"
-            containers.append({
-                "id": str(row.get("ID", ""))[:64],
-                "names": str(row.get("Names", ""))[:255],
-                "image": str(row.get("Image", ""))[:255],
-                "state": str(row.get("State", ""))[:32],
-                "managed": managed,
-                "deployment_id": labels.get("nimbusops.deployment"),
-            })
+            containers.append(
+                {
+                    "id": str(row.get("ID", ""))[:64],
+                    "names": str(row.get("Names", ""))[:255],
+                    "image": str(row.get("Image", ""))[:255],
+                    "state": str(row.get("State", ""))[:32],
+                    "managed": managed,
+                    "deployment_id": labels.get("nimbusops.deployment"),
+                }
+            )
         return {
             "status": "SUCCEEDED",
             "result": {
@@ -484,5 +544,5 @@ class DockerExecutor:
             with httpx.Client(timeout=timeout) as client:
                 resp = client.get(f"http://127.0.0.1:{port}/")
                 return 200 <= resp.status_code < 400
-        except Exception:
+        except httpx.HTTPError:
             return False
