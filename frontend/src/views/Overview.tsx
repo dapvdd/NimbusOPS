@@ -232,6 +232,7 @@ export default function Overview() {
   }
   const awaiting = availability.tokens ? tokens.filter((token) => isLiveToken(token, now)).length : null;
   const allClear =
+    !error && !loading &&
     hostList.length > 0 &&
     attention.length === 0 &&
     availability.tokens &&

@@ -9,6 +9,36 @@ vi.mock("../../auth/Session", () => ({
 }));
 
 describe("Servers view (fleet + filters + awaiting rows)", () => {
+  it("retains confirmation and does not refresh after rejected unregister", async () => {
+    let reads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') return {ok: false, status: 503, json: async () => ({error: {message: 'Unregister unavailable'}})};
+      if (String(input).endsWith('/hosts')) reads++;
+      return {ok: true, json: async () => String(input).endsWith('/hosts')
+        ? {hosts: [{id: 'h-remove', hostname: 'remove-me', status: 'ONLINE', latest_metrics: null}], count: 1} : {tokens: []}};
+    }));
+    render(<MemoryRouter><Servers /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', {name: 'Unregister remove-me'}));
+    fireEvent.change(screen.getByLabelText(/Type the host id/), {target: {value: 'h-remove'}});
+    fireEvent.click(screen.getByRole('button', {name: 'Unregister'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unregister unavailable');
+    expect(screen.getByLabelText(/Type the host id/)).toBeInTheDocument();
+    expect(reads).toBe(1);
+  });
+  it("refreshes the tombstone immediately after confirmed unregister", async () => {
+    let revoked = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") { revoked = true; return {ok: true, json: async () => ({})}; }
+      return {ok: true, json: async () => String(input).endsWith("/hosts")
+        ? {hosts: [{id: "h-remove", hostname: "remove-me", status: revoked ? "REVOKED" : "ONLINE", is_revoked: revoked, latest_metrics: null}], count: 1}
+        : {tokens: [], count: 0}};
+    }));
+    render(<MemoryRouter><Servers /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", {name: "Unregister remove-me"}));
+    fireEvent.change(screen.getByLabelText(/Type the host id/), {target: {value: "h-remove"}});
+    fireEvent.click(screen.getByRole("button", {name: "Unregister"}));
+    expect(await screen.findByRole("link", {name: "Re-enroll"}, {timeout: 1000})).toBeInTheDocument();
+  });
   beforeEach(() => {
     localStorage.clear();
   });

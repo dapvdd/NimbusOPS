@@ -25,7 +25,7 @@ from ..models.provisioning import (
 )
 from ..services.enrollment import issue_bootstrap_token
 from ..services.provisioning import now_ms, policy_hash
-from .ssh import Target, install, preflight
+from .ssh import InstallOutcomeUnknown, Target, install, preflight
 
 
 def claim_job(db: Session) -> str | None:
@@ -80,7 +80,12 @@ def enrollment_ready(db: Session, token_id: str) -> bool:
     return all(fresh(v) for v in (host.last_seen_at, host.last_telemetry_at, latest))
 
 
-def event(db: Session, job: ProvisioningJob, code: str) -> None:
+def event(
+    db: Session,
+    job: ProvisioningJob,
+    code: str,
+    safe_detail: dict[str, int] | None = None,
+) -> None:
     sequence = (
         db.scalar(
             select(func.max(ProvisioningEvent.sequence)).where(
@@ -98,6 +103,9 @@ def event(db: Session, job: ProvisioningJob, code: str) -> None:
             actor_id="ssh-worker",
             code=code,
             state=job.state,
+            safe_detail_json=(
+                json.dumps(safe_detail) if safe_detail is not None else None
+            ),
         )
     )
     job.updated_at = now_ms()
@@ -200,7 +208,7 @@ def _run_once(db: Session, targets: dict[str, Target], origin: str) -> None:
             del plaintext
             job.state = "VERIFYING"
             event(db, job, "WAITING_FOR_TELEMETRY")
-        except (ValueError, ApiError):
+        except (ValueError, ApiError) as exc:
             if job.step == "REVALIDATE" and "bootstrap_token_id" not in json.loads(
                 job.plan_json
             ):
@@ -212,6 +220,16 @@ def _run_once(db: Session, targets: dict[str, Target], origin: str) -> None:
             else:
                 job.reason_code = "RECONCILIATION_REQUIRED"
                 job.state = "VERIFYING"
+                if (
+                    isinstance(exc, InstallOutcomeUnknown)
+                    and exc.exit_status is not None
+                ):
+                    event(
+                        db,
+                        job,
+                        "INSTALL_TRANSPORT_FAILED",
+                        {"transport_exit_status": exc.exit_status},
+                    )
                 event(db, job, "RECONCILIATION_REQUIRED")
         except Exception:
             # Do not log provider output/credentials. A committed admission is

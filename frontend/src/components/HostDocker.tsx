@@ -44,7 +44,7 @@ export default function HostDocker({ host, onChanged }: { host: Host; onChanged:
       <button disabled={!confirmed || busy || host.is_revoked} onClick={() => void enable()} className="rounded border border-ink-600 px-3 py-2 disabled:opacity-40">Enable Docker for this host</button>
     </>}
     {error && <p role="alert">{error}</p>}
-    <Link className="block text-signal-info" to={`/hosts/${encodeURIComponent(host.id)}?tab=Deployments`}>Open this host's deployments</Link>
+    <Link className="block text-signal-info" to={`/servers/${encodeURIComponent(host.id)}?tab=Deployments`}>Open this host's deployments</Link>
     <h3 className="text-sm font-medium">Docker inventory</h3>
     {inventoryError ? <p role="status">Docker inventory unavailable: {inventoryError}. Telemetry-only agents do not report Docker inventory.</p> : !inventory ? <p>Loading Docker inventory…</p> : <>
       <p className="text-xs text-ink-300">Snapshot observed {formatUtcTime(inventory.observed_at)} · {inventory.age_seconds ?? "unknown"} seconds old at fetch; not a live probe. Host status: {host.status}.</p>

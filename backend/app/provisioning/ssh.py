@@ -176,6 +176,14 @@ trap 'rm -rf "$secret"' EXIT
     return source
 
 
+class InstallOutcomeUnknown(ValueError):
+    """Only the transport exit status is safe; it is not proof of remote rollback."""
+
+    def __init__(self, exit_status: int | None = None) -> None:
+        super().__init__("INSTALL_OUTCOME_UNKNOWN")
+        self.exit_status = exit_status
+
+
 def install(target: Target, origin: str, token: str) -> None:
     """Execute the pinned installer with an explicit noninteractive input adapter.
 
@@ -190,8 +198,12 @@ def install(target: Target, origin: str, token: str) -> None:
         raise ValueError("INVALID_BOOTSTRAP_INPUT")
     import inspect
 
-    ca_download = f" --cacert {shlex.quote(target.ca_bundle)}" if target.ca_bundle else ""
-    ca_install = f" --ca-bundle {shlex.quote(target.ca_bundle)}" if target.ca_bundle else ""
+    ca_download = (
+        f" --cacert {shlex.quote(target.ca_bundle)}" if target.ca_bundle else ""
+    )
+    ca_install = (
+        f" --ca-bundle {shlex.quote(target.ca_bundle)}" if target.ca_bundle else ""
+    )
 
     adapter = inspect.getsource(adapt_installer) + """
 from pathlib import Path
@@ -226,6 +238,6 @@ unset bootstrap
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        raise ValueError("INSTALL_OUTCOME_UNKNOWN") from None
+        raise InstallOutcomeUnknown() from None
     if result.returncode:
-        raise ValueError("INSTALL_OUTCOME_UNKNOWN")
+        raise InstallOutcomeUnknown(result.returncode)

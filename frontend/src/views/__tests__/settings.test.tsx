@@ -54,6 +54,43 @@ afterEach(() => {
 });
 
 describe("Settings", () => {
+  it("does not retain ready when the health probe becomes unavailable", async () => {
+    let fail = false;
+    const base = stubApi();
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => fail && String(url).endsWith('/health')
+      ? Promise.resolve(jsonResponse({}, 502)) : base(url, init)));
+    renderSettings();
+    await screen.findByTestId('readiness-ok');
+    fail = true;
+    fireEvent.click(screen.getByRole('button', {name: /recheck/i}));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Health probe unavailable/);
+    expect(screen.queryByTestId('readiness-ok')).not.toBeInTheDocument();
+  });
+  it("reports sign-out failure without pretending the session ended", async () => {
+    const base = stubApi();
+    vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => String(url).includes('/session/logout')
+      ? Promise.resolve(jsonResponse({error: {message: 'Logout unavailable'}}, 503)) : base(url, init)));
+    renderSettings();
+    fireEvent.click(await screen.findByRole('button', {name: /sign out/i}));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/sign.out failed/i);
+    expect(screen.getByTestId('settings-account')).toHaveTextContent('admin');
+  });
+  it("does not claim ready when the readiness probe is unavailable", async () => {
+    vi.stubGlobal("fetch", stubApi({ ready: () => jsonResponse({}, 502) }));
+    renderSettings();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/readiness/i);
+    expect(screen.queryByTestId("readiness-ok")).not.toBeInTheDocument();
+  });
+
+  it("clears stale readiness after a failed recheck", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", stubApi({ ready: () => ++calls === 1 ? jsonResponse(READY_OK) : jsonResponse({}, 502) }));
+    renderSettings();
+    await screen.findByTestId("readiness-ok");
+    fireEvent.click(screen.getByRole("button", { name: /recheck/i }));
+    await screen.findByRole("alert");
+    expect(screen.queryByTestId("readiness-ok")).not.toBeInTheDocument();
+  });
   it("renders the signed-in operator from the real session", async () => {
     vi.stubGlobal("fetch", stubApi());
     renderSettings();

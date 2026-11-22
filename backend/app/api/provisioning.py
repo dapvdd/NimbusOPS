@@ -1,5 +1,6 @@
 """ADMIN-only target discovery. Server policy is the authorization boundary."""
 
+import json
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -14,8 +15,8 @@ from ..models import Operator
 from ..models.provisioning import ProvisioningEvent, ProvisioningJob
 from ..provisioning.ssh import Target, load_targets, preflight
 from ..services.provisioning import (
-    confirmation_hash,
     confirm_plan,
+    confirmation_hash,
     recover_confirmation,
     retry_plan,
     save_plan,
@@ -150,9 +151,29 @@ def job_status(
         and not job.reconciliation_required
         and job.step == "REVALIDATE",
         "events": [
-            {"sequence": e.sequence, "code": e.code, "at": e.at} for e in events
+            {
+                "sequence": e.sequence,
+                "code": e.code,
+                "at": e.at,
+                "safe_detail": safe_event_detail(e),
+            }
+            for e in events
         ],
     }
+
+
+def safe_event_detail(event: ProvisioningEvent) -> dict[str, int]:
+    """Explicit allowlist: never expose arbitrary provider text or stored JSON."""
+    if event.code != "INSTALL_TRANSPORT_FAILED":
+        return {}
+    try:
+        detail = json.loads(event.safe_detail_json or "{}")
+    except (ValueError, TypeError):
+        return {}
+    status = detail.get("transport_exit_status") if isinstance(detail, dict) else None
+    if type(status) is int and -255 <= status <= 255:
+        return {"transport_exit_status": status}
+    return {}
 
 
 @router.post("/jobs/{job_id}/retry")

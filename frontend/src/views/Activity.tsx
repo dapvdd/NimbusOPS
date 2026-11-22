@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { Operation } from "../api/types";
 import { formatUtcTime } from "../lib/format";
@@ -16,12 +16,14 @@ export default function Activity({ hostId }: { hostId?: string }) {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const requestVersion = useRef(0);
 
   const load = useCallback(
     (offset = 0) => {
       const append = offset > 0;
+      const version = ++requestVersion.current;
       if (append) setLoadingMore(true);
-      else setLoading(true);
+      else { setLoading(true); setLoadingMore(false); }
       // RC2 F10: filtering and windowing are server-side, so a filter can never
       // hide matching rows that fall outside an already-fetched page.
       api
@@ -32,12 +34,14 @@ export default function Activity({ hostId }: { hostId?: string }) {
           offset,
         })
         .then((data) => {
+          if (version !== requestVersion.current) return;
           setOps((current) => (append ? [...current, ...data.operations] : data.operations));
           setTotal(data.total);
           setError("");
         })
-        .catch((err) => setError(err.message))
+        .catch((err) => { if (version === requestVersion.current) setError(err.message); })
         .finally(() => {
+          if (version !== requestVersion.current) return;
           if (append) setLoadingMore(false);
           else setLoading(false);
         });
@@ -47,6 +51,7 @@ export default function Activity({ hostId }: { hostId?: string }) {
 
   useEffect(() => {
     load(0);
+    return () => { requestVersion.current += 1; };
   }, [load]);
 
   return (

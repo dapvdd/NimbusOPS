@@ -33,6 +33,7 @@ it("shows only the selected real host's inventory and snapshot age", async () =>
   expect(await screen.findByText("owner-nginx")).toBeInTheDocument();
   expect(screen.getByText(/25 seconds/)).toBeInTheDocument();
   expect(screen.getByText("Unmanaged")).toBeInTheDocument();
+  expect(screen.getByRole('link', {name: /Open this host/})).toHaveAttribute('href', '/servers/vm-2?tab=Deployments');
   expect(requests.some(r => r.url.endsWith("/hosts/vm-2/inventory"))).toBe(true);
   expect(requests.every(r => !r.init?.method || r.init.method === "GET")).toBe(true);
 });

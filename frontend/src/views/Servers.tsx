@@ -235,7 +235,7 @@ export default function Servers() {
 
       {/* Safe Unregister Dialog */}
       {admin && removing && (
-        <UnregisterDialog host={removing} onClose={() => setRemoving(null)} />
+        <UnregisterDialog host={removing} onClose={() => setRemoving(null)} onRevoked={() => void refetch()} />
       )}
     </div>
   );
@@ -254,9 +254,11 @@ function countdownLabel(expiresAt: string): string {
 function UnregisterDialog({
   host,
   onClose,
+  onRevoked,
 }: {
   host: { id: string; name: string };
   onClose: () => void;
+  onRevoked: () => void;
 }) {
   const [confirmText, setConfirmText] = useState("");
   const [error, setError] = useState("");
@@ -269,6 +271,7 @@ function UnregisterDialog({
     setError("");
     try {
       await api.revokeHost(host.id);
+      onRevoked();
       onClose();
     } catch (err) {
       setError(err instanceof ApiFailure ? err.message : "Unregister failed.");

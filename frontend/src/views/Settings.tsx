@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiFailure } from "../api/client";
+import { api } from "../api/client";
 import type { HealthResponse, ReadinessResponse } from "../api/types";
 import { useSession } from "../auth/Session";
 import { CopyField } from "../ui/CopyField";
@@ -52,6 +52,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState('');
 
   const check = useCallback(async () => {
     setLoading(true);
@@ -59,13 +60,12 @@ export default function Settings() {
     const started = Date.now();
     const [healthResult, readinessResult] = await Promise.allSettled([api.health(), api.readiness()]);
 
-    if (healthResult.status === "fulfilled") setHealth(healthResult.value ?? null);
-    if (readinessResult.status === "fulfilled") setReadiness(readinessResult.value ?? null);
+    setHealth(healthResult.status === "fulfilled" ? healthResult.value ?? null : null);
+    setReadiness(readinessResult.status === "fulfilled" ? readinessResult.value ?? null : null);
 
     const failures = [healthResult, readinessResult].filter((result) => result.status === "rejected");
-    if (failures.length === 2) {
-      const reason = (healthResult as PromiseRejectedResult).reason;
-      setError(reason instanceof ApiFailure ? reason.message : "Cannot reach the NimbusOps server.");
+    if (failures.length > 0) {
+      setError(`${healthResult.status === "rejected" ? "Health" : "Readiness"} probe unavailable. Control-plane readiness is not verified; recheck before relying on it.`);
     }
 
     setLatencyMs(Date.now() - started);
@@ -80,8 +80,11 @@ export default function Settings() {
   const handleSignOut = async () => {
     if (!session) return;
     setSigningOut(true);
+    setSignOutError('');
     try {
       await session.logout();
+    } catch {
+      setSignOutError('Sign-out failed. Your session has not been confirmed closed; please retry.');
     } finally {
       setSigningOut(false);
     }
@@ -122,9 +125,9 @@ export default function Settings() {
             <p className="text-sm text-ink-400">Not signed in.</p>
           )}
         </div>
-        {session?.error && (
+        {(signOutError || session?.error) && (
           <p role="alert" className="text-xs text-signal-warn">
-            {session.error}
+            {signOutError || session?.error}
           </p>
         )}
       </section>
@@ -170,7 +173,7 @@ export default function Settings() {
               <p className="text-ink-400">This console does not restart services.</p>
             </div>
           </div>
-        ) : readiness || health ? (
+        ) : !loading && !error && readiness?.ready && health?.status === "ok" ? (
           <div
             data-testid="readiness-ok"
             className="space-y-2 rounded-lg border border-signal-good/40 bg-signal-good/10 p-4 text-sm text-signal-good"

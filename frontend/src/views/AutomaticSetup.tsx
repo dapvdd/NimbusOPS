@@ -140,8 +140,11 @@ export default function AutomaticSetup() {
         <Button disabled={!confirmed || busy || Date.now() >= plan.expires_at} onClick={install}>Confirm installation</Button>
       </div>}
     </>}
-    {jobId && <div aria-live="polite"><p>Job: {jobId}</p><p>Status: {job?.state ?? 'PENDING'}</p>
-      <ul>{job?.events.map(e => <li key={e.sequence}>{e.code}</li>)}</ul>
+    {jobId && <div aria-live="polite"><p>Job: {jobId}</p><p>Status: {job?.state ?? 'Loading — outcome not yet verified'}</p>
+      {job && <><p>Step: {job.step}</p>{job.reason_code && <p>Reason: {job.reason_code}</p>}</>}
+      <ul>{job?.events.map(e => <li key={e.sequence}>{e.code}
+        {e.code === 'INSTALL_TRANSPORT_FAILED' && Number.isInteger(e.safe_detail?.transport_exit_status) && <p>Transport exit status: {e.safe_detail?.transport_exit_status}. This is not proof of installer completion or rollback; operator reconciliation is required.</p>}
+      </li>)}</ul>
       {job?.state === 'SUCCEEDED' ? <p>Enrollment, fresh heartbeat and telemetry verified.</p> : <p>Service startup alone is not proof of success.</p>}
       {job?.reconciliation_required && <p>Do not reinstall or reenroll. An uncertain outcome requires operator reconciliation; blind retry is blocked.</p>}
       {job?.retry_allowed && <Button disabled={busy} onClick={retry}>Retry with new preflight and approval</Button>}

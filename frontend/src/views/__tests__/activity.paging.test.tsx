@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import Activity from "../Activity";
 
 // RC2 F10: the status filter must run on the server and history must be
@@ -20,6 +20,33 @@ const op = (id: string, status: string, createdAt: string) => ({
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("restores pagination after switching filters during an older-page request", async () => {
+  let resolveOlder!: (value: unknown) => void;
+  vi.stubGlobal('fetch', vi.fn((url: RequestInfo | URL) => {
+    if (String(url).includes('offset=1') && !String(url).includes('status=')) return new Promise(resolve => {resolveOlder = resolve;});
+    return Promise.resolve({ok: true, json: async () => ({operations: [op('new-filter', 'FAILED', '2026-11-12T09:00:00Z')], total: 2})});
+  }));
+  render(<Activity />);
+  fireEvent.click(await screen.findByRole('button', {name: /load older/i}));
+  fireEvent.click(screen.getByRole('button', {name: 'FAILED'}));
+  await act(async () => resolveOlder({ok: true, json: async () => ({operations: [], total: 2})}));
+  expect(await screen.findByRole('button', {name: /load older/i})).toBeEnabled();
+});
+
+it("ignores a late response from an obsolete status filter", async () => {
+  let resolveOld!: (value: unknown) => void;
+  vi.stubGlobal("fetch", vi.fn((url: RequestInfo | URL) => {
+    if (!String(url).includes("status=FAILED")) return new Promise(resolve => { resolveOld = resolve; });
+    return Promise.resolve({ ok: true, json: async () => ({operations: [op("current-failed", "FAILED", "2026-11-12T09:00:00Z")], total: 1}) });
+  }));
+  render(<Activity />);
+  fireEvent.click(screen.getByRole("button", { name: "FAILED" }));
+  await screen.findByText("current-failed");
+  await act(async () => resolveOld({ok: true, json: async () => ({operations: [op("obsolete-success", "SUCCEEDED", "2026-11-12T09:00:00Z")], total: 1})}));
+  expect(screen.queryByText("obsolete-success")).not.toBeInTheDocument();
+  expect(screen.getByText("current-failed")).toBeInTheDocument();
+});
 
 it("sends the status filter to the server and pages older rows by offset", async () => {
   const calls: string[] = [];

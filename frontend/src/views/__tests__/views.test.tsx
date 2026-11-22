@@ -59,6 +59,24 @@ afterEach(() => {
 });
 
 describe("Overview", () => {
+  it("does not claim all clear after a fleet refresh fails", async () => {
+    let fail = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).endsWith('/hosts')) {
+        if (fail) throw new Error('offline');
+        return jsonResponse({hosts: [hostOnline], count: 1});
+      }
+      if (String(url).includes('/bootstrap-tokens')) return jsonResponse({tokens: []});
+      if (String(url).includes('/operations')) return jsonResponse({operations: []});
+      return jsonResponse({status: 'ok', database: 'ok'});
+    }));
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    await screen.findByTestId('all-clear');
+    fail = true;
+    await act(async () => { pollHandlers.forEach(fn => fn()); });
+    await screen.findAllByText(/Last refresh failed/);
+    expect(screen.queryByTestId('all-clear')).not.toBeInTheDocument();
+  });
   it("renders loading state first", () => {
     vi.stubGlobal(
       "fetch",

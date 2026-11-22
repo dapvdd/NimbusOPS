@@ -3,6 +3,28 @@ import { afterEach, it, expect, vi } from 'vitest';
 import AutomaticSetup from '../AutomaticSetup';
 afterEach(() => {vi.restoreAllMocks(); sessionStorage.clear();});
 
+it('shows preserved uncertain job step and reason without claiming enrollment or offering retry', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  sessionStorage.setItem('nimbusops.setup.job.v1', '007ab9c1-9a05-4a43-9097-474b864e4d4b');
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: []});
+  vi.spyOn(provisioning, 'job').mockResolvedValue({id: '007ab9c1-9a05-4a43-9097-474b864e4d4b', state: 'VERIFYING', step: 'INSTALL_ADMITTED', reason_code: 'RECONCILIATION_REQUIRED', reconciliation_required: true, retry_allowed: false, events: []});
+  render(<AutomaticSetup />);
+  expect(await screen.findByText(/Step: INSTALL_ADMITTED/)).toBeInTheDocument();
+  expect(screen.getByText(/Reason: RECONCILIATION_REQUIRED/)).toBeInTheDocument();
+  expect(screen.queryByText(/Enrollment, fresh heartbeat/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', {name: /retry|add another/i})).not.toBeInTheDocument();
+});
+
+it('renders only allowlisted numeric transport diagnostics with uncertainty warning', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  sessionStorage.setItem('nimbusops.setup.job.v1', 'diagnostic');
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: []});
+  vi.spyOn(provisioning, 'job').mockResolvedValue({id: 'diagnostic', state: 'VERIFYING', step: 'INSTALL_ADMITTED', reason_code: 'RECONCILIATION_REQUIRED', reconciliation_required: true, retry_allowed: false,
+    events: [{sequence: 1, code: 'INSTALL_TRANSPORT_FAILED', at: 0, safe_detail: {transport_exit_status: 73}}]});
+  render(<AutomaticSetup />);
+  expect(await screen.findByText(/Transport exit status: 73/)).toHaveTextContent(/not proof.*rollback/i);
+});
+
 it('allows fresh preflight after definitive rejection of a never-dispatched intent', async () => {
   const { provisioning } = await import('../../api/provisioning');
   const { ApiFailure } = await import('../../api/client');
