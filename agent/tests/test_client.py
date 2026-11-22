@@ -188,3 +188,33 @@ def test_heartbeat_updates_docker_enabled_flag():
     ok, _ = s.send_heartbeat({})
     assert ok
     assert s.docker_enabled is False
+
+
+def test_rejected_result_with_non_terminal_status_is_not_acknowledged():
+    """HTTP 200 + accepted=False + RUNNING must keep the durable outcome."""
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={"operation_id": "op-1", "status": "RUNNING", "accepted": False},
+        )
+
+    s = _make(handler)
+    ok, detail = s.submit_command_result("op-1", {"status": "SUCCEEDED"})
+    assert ok is False
+    assert "RUNNING" in detail
+
+
+def test_duplicate_result_with_terminal_status_is_acknowledged():
+    """A first-write-wins duplicate is safe to clear from the journal."""
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={"operation_id": "op-1", "status": "SUCCEEDED", "accepted": False},
+        )
+
+    s = _make(handler)
+    ok, detail = s.submit_command_result("op-1", {"status": "SUCCEEDED"})
+    assert ok is True
+    assert detail == "ok"

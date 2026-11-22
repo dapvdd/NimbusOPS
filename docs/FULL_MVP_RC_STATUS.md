@@ -66,12 +66,14 @@ authorization: `FULL_MVP_OPERATOR_RUNBOOK.md`.
 
 ## Agent distribution and recovery
 
-New immutable artifact:
-`nimbusops-agent-1.0.0rc2-fullmvp1-ubuntu24.04-amd64.tar.gz`.
-SHA256: `a522b93c4e90d5708eef6f663f7a2d4ecc22e566155349b93d8bd77a1ccfe6df`.
+Final immutable artifact:
+`nimbusops-agent-1.0.0rc2-fullmvp2-ubuntu24.04-amd64.tar.gz`.
+SHA256: `72e14b89a3c0dc407dc46398f8474dd38bd6e41cccdb6d06204df8a744554426`.
 Backend/frontend pins agree; release regression compares every shipped source file.
-Old dualmode1/2 bytes retained. Builder reuses existing wheel bytes, installs nothing.
-This proves archive consistency, not fresh vulnerability scans or Ubuntu execution.
+`fullmvp1` was superseded after the final client acknowledgement fix; dualmode1/2
+and fullmvp1 bytes are retained unchanged. The builder reuses existing wheel bytes
+and installs nothing. This proves archive consistency, not fresh vulnerability
+scans or Ubuntu execution.
 
 Pending result journal recovers interrupted delivery and claim generations without
 repeating recorded effects. Corruption/unreadability fails closed. Crash between
@@ -86,15 +88,25 @@ SIGKILL can lose phase evidence, but admission still forbids redispatch.
 - Agent post-repair:146 passed,1 skipped; outcome journal9/9.
 - Monitoring selection:186 passed,10 skipped (POSIX CA permission cases).
 - Docker/local HTTP recovery selection:125 passed,3 dependency warnings.
-- Existing isolated browser harness:19 passed,0 failed; owned processes stopped,
-  disposable DB removed. Artifacts: `C:/Users/user/AppData/Local/Temp/opencode/nimbusops-real-browser-f0m24baj`.
-- Production `npm run build`: TypeScript/Vite PASS after final diagnostic UI edits.
+- Final isolated browser harness: 19 passed, 0 failed; owned processes stopped,
+  disposable DB removed. Artifacts: `C:/Users/user/AppData/Local/Temp/opencode/nimbusops-real-browser-_zjxaxyl`.
+- Production `npm run build`: TypeScript/Vite PASS after final release-pin edits.
 - Final frontend suite: `npm test -- --run` → 228 passed/32 files (React Router future warnings).
 - Final `npx tsc --noEmit`: PASS.
-- Scoped strict mypy worker/docker executor/rebuild helper PASS; scoped Ruff PASS.
-- Final full Python suite: `python -m pytest -q` → 600 passed, 11 skipped,
+- Scoped strict mypy worker/docker executor/rebuild helper PASS; scoped Ruff PASS on
+  changed diagnostics/monitoring files. Pre-existing API/agent import-order,
+  B008/RUF100 and phase-2 lint debt remains documented under P2.
+- First clean full Python suite: `python -m pytest -q` → 600 passed, 11 skipped,
   3 dependency warnings, exit 0 in 135.14 s (includes real loopback agent/backend
   integration and the corrected diagnostics/regression tests).
+- Final whole-branch review found no Critical defects and one Important durable-
+  outcome bug: an HTTP 200 with `accepted=False` and a non-terminal status was
+  treated as delivered. Fixed test-first in the Sender result acknowledgement
+  path; terminal duplicate delivery remains safely acknowledged. The resulting
+  source/archive mismatch forced a new immutable `fullmvp2` release with updated
+  pins.
+- Final full Python suite: `python -m pytest -q` → 603 passed, 11 skipped,
+  3 dependency warnings, exit 0 in 140.15 s.
 
 ## Remaining blockers
 
@@ -105,7 +117,7 @@ SIGKILL can lose phase evidence, but admission still forbids redispatch.
   Docker executable is absent in this Windows environment.
 
 ### P1 before staging acceptance/sign-off
-- Final independent review and full regression closure must be recorded.
+- Final independent review and full local regression closure are recorded; real-host evidence below is still mandatory.
 - Validate exact proxy TLS/certificate strategy and least-privilege executor
   profile on the fresh target; canonical Zero-Touch installer is telemetry-only.
 - Run POSIX-only permission gates and privileged service lifecycle on new guest.

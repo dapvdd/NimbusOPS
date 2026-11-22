@@ -152,8 +152,8 @@ def preflight(target: Target) -> dict[str, str]:
     return parse_preflight(target, result.stdout)
 
 
-AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-fullmvp1-ubuntu24.04-amd64.tar.gz"
-AGENT_SHA256 = "a522b93c4e90d5708eef6f663f7a2d4ecc22e566155349b93d8bd77a1ccfe6df"
+AGENT_RELEASE = "nimbusops-agent-1.0.0rc2-fullmvp2-ubuntu24.04-amd64.tar.gz"
+AGENT_SHA256 = "72e14b89a3c0dc407dc46398f8474dd38bd6e41cccdb6d06204df8a744554426"
 
 
 def adapt_installer(source: str) -> str:

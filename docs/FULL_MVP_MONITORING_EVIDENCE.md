@@ -4,7 +4,7 @@
 
 After the initial evidence collection, repair authorization expanded to the telemetry handler and this worker's new test module. Two test-first cases (aware/naive timestamps one year ahead) failed with HTTP 200 instead of expected 422 before the fix. The telemetry handler now interprets naive time as UTC, normalizes offset-aware time to UTC, and rejects `recorded_at` more than five minutes ahead of server receipt with the established 422 `detail` validation shape, after authenticating and before persistence/liveness mutation. Delayed samples and duplicate retries remain accepted; no migration, sequence protocol, or enrollment behavior changed. Server receipt time already controls `last_seen_at` in the service. Eight focused cases passed after repair, including old samples, modest future skew, offset normalization, and rejection without connectivity refresh. This limits new future poisoning; it does not repair existing poisoned rows or change past-sample freshness semantics. Broad verification results are supplied in the follow-up worker report.
 
-Coordinator reports a new `fullmvp1` artifact/source equality gate passes; the earlier archive failure below is historical evidence from the original pinned `dualmode2` run, not an assertion that the new artifact fails. Caddy changes remain coordinator-owned.
+Coordinator reports that the final immutable `fullmvp2` artifact/source equality gate passes; the earlier archive failures (`dualmode2`, then `fullmvp1` after a later client fix) are historical evidence, not assertions about the final artifact. Caddy changes remain coordinator-owned.
 
 Follow-up targeted command: `python -m pytest backend/tests/test_full_mvp_monitoring.py backend/tests/test_hosts_telemetry.py backend/tests/test_agent_auth.py backend/tests/test_utc_wire_timestamps.py backend/tests/test_bootstrap_enrollment.py backend/tests/test_tls_release.py -q` → **42 passed, 1 warning**, exit 0 (6.06 s), independently confirming the current artifact equality gate. New-file Ruff/Black/strict Mypy pass; `git diff --check` exits 0 with line-ending warnings. Whole-file Ruff for `agents.py` still reports five pre-existing B008 (`Depends` defaults) and one existing RUF100 (unused `BLE001` noqa); unrelated handler/style code was not altered.
 
@@ -14,7 +14,7 @@ Date: 2026-11-22. Scope: independent local validation in `integration/full-mvp-r
 
 - Monitoring, enrollment replay rejection, authorization, migrations and local recovery checks pass in the selected suite: **186 passed, 10 skipped** (38.13 s, exit 0).
 - New isolated evidence tests: **3 passed**, including API connectivity transitions/recovery, duplicate telemetry characterization/retention, and SQLite online backup/restore with identity/telemetry preservation and repeated migrations.
-- **Historical release gate failure was resolved locally:** the original `dualmode2` archive/source divergence was reproduced, then a new immutable `fullmvp1` artifact was built from the reviewed wheel and both pins were updated. The equality gate now passes; real-host execution of that artifact remains an unmet acceptance gate.
+- **Historical release gate failures were resolved locally:** the original `dualmode2` divergence and the later `fullmvp1` divergence (after a client acknowledgement fix) were reproduced; a final immutable `fullmvp2` artifact was built from the reviewed wheel/current source and both pins were updated. The equality gate now passes; real-host execution of that artifact remains an unmet acceptance gate.
 - Ten CA persistence permission tests are skipped on Windows. Live Ubuntu and deployment acceptance remain mandatory.
 
 ## Reproducible commands and results
@@ -64,7 +64,7 @@ Final focused rerun: **3 passed, 1 warning**, exit 0; Ruff, Black check and stri
 
 ### M5-01 — Historical source/archive divergence (locally resolved)
 
-**Location:** `backend/tests/test_tls_release.py:9–22`; original `dualmode2` archive above. **Historical evidence:** checksum/pin assertions passed while source-member comparison failed for three agent modules. **Local disposition:** coordinator created a new immutable `fullmvp1` artifact from the reviewed wheel bytes, updated both pins, and reran the equality gate to PASS; the old immutable archive was not modified. **Remaining gate:** the new artifact has not executed on an authorized fresh Ubuntu host, so this is not real-host acceptance. No evidence established credential disclosure or malicious tampering.
+**Location:** `backend/tests/test_tls_release.py:9–22`; original `dualmode2` archive above. **Historical evidence:** checksum/pin assertions passed while source-member comparison failed for three agent modules. **Local disposition:** coordinator created `fullmvp1`, then superseded it with `fullmvp2` after the final client acknowledgement fix; both were built from reviewed wheel bytes/current source, pins were updated, and the final equality gate PASSED. Old immutable archives were not modified. **Remaining gate:** the final artifact has not executed on an authorized fresh Ubuntu host, so this is not real-host acceptance. No evidence established credential disclosure or malicious tampering.
 
 ### M5-02 — Medium deployment configuration gap: TLS example is not self-sufficient
 

@@ -197,3 +197,57 @@ def test_unreadable_outcome_journal_fails_closed(tmp_path, monkeypatch):
     monkeypatch.setattr(type(path), "read_text", denied)
     with pytest.raises(RuntimeError, match="^OUTCOME_JOURNAL_UNREADABLE$"):
         FileOutcomeStore(path)
+
+
+def test_http_200_rejected_result_keeps_journal_until_accepted(tmp_path):
+    """A stale-generation 200 rejection must not discard the only outcome."""
+    import json
+
+    import httpx
+
+    from agent.nimbusops_agent.client import Sender
+    from agent.nimbusops_agent.worker import SenderCommandAdapter
+
+    calls = {"poll": 0, "result": []}
+    store = FileOutcomeStore(tmp_path / "pending_results.json")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/commands/poll"):
+            calls["poll"] += 1
+            generation = 1 if calls["poll"] == 1 else 2
+            return httpx.Response(200, json={"commands": [dict(COMMAND, claim_generation=generation)]})
+        if request.url.path.endswith("/result"):
+            payload = json.loads(request.content)
+            calls["result"].append(payload)
+            if payload.get("claim_generation") == 2:
+                return httpx.Response(
+                    200,
+                    json={"operation_id": COMMAND["id"], "status": "SUCCEEDED", "accepted": True},
+                )
+            return httpx.Response(
+                200,
+                json={"operation_id": COMMAND["id"], "status": "RUNNING", "accepted": False},
+            )
+        raise AssertionError(request.url.path)
+
+    sender = Sender("http://test", "host-1", "tok", max_retries=1, sleep_fn=lambda _: None)
+    sender._client = httpx.Client(transport=httpx.MockTransport(handler))
+    sender.docker_enabled = True
+    ex = NoopExecutor()
+    worker = CommandWorker(
+        http=SenderCommandAdapter(sender),
+        executor=ex,
+        outcome_store=store,
+        poll_retry=3,
+        sleep_fn=lambda _: None,
+    )
+
+    worker.poll_once()
+    assert ex.executed == [COMMAND["id"]]
+    assert COMMAND["id"] in store.pending(), "rejected 200 must keep the durable outcome"
+    assert all(item.get("claim_generation") == 1 for item in calls["result"])
+
+    worker.poll_once()
+    assert ex.executed == [COMMAND["id"]], "redelivery must never re-run Docker"
+    assert calls["result"][-1]["claim_generation"] == 2
+    assert COMMAND["id"] not in store.pending()

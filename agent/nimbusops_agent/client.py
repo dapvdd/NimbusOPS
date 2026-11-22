@@ -189,6 +189,17 @@ class Sender:
         except httpx.HTTPError as exc:
             return False, f"network error: {type(exc).__name__}"
         if 200 <= resp.status_code < 300:
+            try:
+                body = resp.json()
+            except ValueError:
+                body = None
+            # A stale claim generation can be rejected with HTTP 200. Only a
+            # terminal server status proves the outcome is already recorded;
+            # otherwise the worker must keep its durable copy for redelivery.
+            if isinstance(body, dict) and body.get("accepted") is False:
+                status = body.get("status")
+                if status not in {"SUCCEEDED", "FAILED", "UNKNOWN"}:
+                    return False, f"result rejected: status={status}"
             return True, "ok"
         if resp.status_code in (401, 403):
             raise AuthError(f"server rejected credentials (HTTP {resp.status_code})")
