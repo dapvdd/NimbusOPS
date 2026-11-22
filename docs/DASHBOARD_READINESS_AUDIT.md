@@ -1,6 +1,133 @@
 # NimbusOps dashboard functional readiness — 2026-11-22
 
-## Verdict: PARTIALLY READY
+## Finalization verdict: DEMO READY — bounded local demonstration
+
+The dashboard is ready for the verified local demonstration using synthetic data
+and real React/FastAPI processes. This is **not** real infrastructure acceptance,
+production/deployment approval, an exhaustive all-controls browser certification,
+or a repository-wide typing-clean verdict. The finalization ledger is
+`docs/superpowers/plans/2026-11-22-dashboard-finalization.md`. The finalization
+matrix below supersedes the historical baseline at `ce177eb` retained afterward.
+Automatic Setup remains **NOT ACCEPTED** for real provisioning; historical
+acceptance evidence and runtime were not accessed or modified.
+
+Coordinator verification during resumed sprint: full Python suite **542 passed,
+11 skipped**, with three dependency deprecation warnings. Scoped Ruff and Black
+passed for the history API, worker typing repair and history tests. Strict mypy
+passes for the two changed production modules with `--follow-imports=silent`;
+unrestricted import checking still finds 24 errors in six other modules. This is
+not a repository-wide typing-clean claim.
+
+### Finalization evidence matrix
+
+| Surface | New evidence | Remaining boundary |
+|---|---|---|
+| Login/session/CSRF | Disposable real-browser runs: invalid/valid login, reload, HttpOnly/SameSite cookie, missing CSRF and untrusted Origin rejection, logout, VIEWER restrictions; expanded run also verifies server-revoked session redirects and reauthentication | Expiry uses revocation, not elapsed TTL |
+| Overview and Servers | Real synthetic fleet search/environment/refresh; token feed failures are distinct from empty results; VIEWER token request role gate has focused regressions | No real managed fleet observed; token feed remains bounded to 50 |
+| Host detail and tabs | Real backend fixture host across Overview/Monitoring/Deployments/Activity; dialog dismissal and focus restoration; host-event recovery regression | Destructive confirmations not submitted; real lifecycle/Docker actions not exercised |
+| Automatic Setup history | Owner-scoped ADMIN GET list/detail, metadata allowlist, pagination/access tests; expanded real browser 50→65 jobs, refresh/inspection/status refresh/reference recovery; foreign-owner list exclusion and detail 404 | No admission/dispatch/installer; NOT ACCEPTED |
+| Manual Bootstrap | Shared automatic/manual proof refresh invalidates stale success on failure; component regressions; browser hostname/mode controls | No browser token generation or installer; enrollment proof uses isolated tests |
+| Applications | Admitted IDs retained through lookup errors, read-only recheck, UNKNOWN write lock; original 11 tests restored alongside remount/operator/host/storage-failure regressions | SessionStorage is same-tab only; no cross-tab guard or recovery of an interrupted POST without returned ID; no container execution |
+| Activity | Real backend 50→65 paging, FAILED filter→22, empty RUNNING filter | Synthetic offline rows, not real infrastructure activity |
+| Settings/clipboard | Actual Chromium clipboard, live health probes/recheck; corrected unverified-readiness wording and copy failure regressions | Configuration stays documentation-only; no restart or deployment |
+| Responsive/error recovery | Chromium 390×844 viewport, no horizontal overflow; explicitly injected browser-offline mode and real Retry recovery | Not assistive-technology certification or every device/browser |
+
+All live fixtures use a new disposable SQLite database and synthetic accounts,
+hosts, operations and disabled provisioning metadata. No core API interception is
+used. Offline mode is an explicitly injected transport fault, not a live outage.
+The original historical job is not the seeded browser fixture and remains untouched.
+
+Coordinator runs `python frontend/scripts/finalization-browser.py` against actual
+local Vite/FastAPI processes. This does not prove actual backend-crash recovery,
+elapsed session TTL, installer success or real infrastructure behavior. Latest
+counts and artifact paths are recorded below. Final admission-review repairs passed
+the subsequent combined frontend test and production build gates.
+
+Independent review: owner/admin isolation, metadata/event allowlists, unresolved
+confirmation preservation, failed manual-proof invalidation, read-only history and
+typing-only worker CAS changes had no additional Important findings. An Important
+enabled→busy dialog focus transition was repaired with four observed failing
+regressions followed by 13 focused passes; coordinator combined frontend gate is
+now **226 tests/32 files**, and fresh production build passes. Real Chromium
+busy-transition verification also passes in the latest 19-check run below. Deferred minor: offset
+pagination may repeat a history row if jobs are inserted between pages; no cursor
+snapshot guarantee is claimed. Subsequent review covers the deployment/feed/browser
+changes separately.
+
+Deployment review identified additional Important cases: server-reported
+UNKNOWN allowing lifecycle writes, deployment/lifecycle cross-panel guards, and a
+delayed admission response arriving after navigation/remount. Eight new regressions
+were observed failing before the fix and all 32 Applications tests now pass,
+including the retained 11 original tests. Shared pending/admission subscriptions,
+server UNKNOWN/cross-panel guards, fail-closed storage-read recovery and
+ADMIN→VIEWER→ADMIN reference/polling isolation address those findings. Same-tab
+pending markers block resubmission after reload before an ID arrives, but recovery
+then requires backend/operator reconciliation; cross-tab coordination is not claimed.
+
+### Sprint commits (local only)
+
+- `e2f8809` — owner-scoped read-only provisioning history API, access/pagination/
+  secret/read-only regressions and typed worker CAS result.
+- `235c4b5` — token/event/manual/readiness/clipboard/dialog recovery and discoverable
+  read-only setup history, with unresolved confirmation preservation.
+- `0cd4f96` — disposable real-browser/backend integration and isolated busy-dialog
+  focus coverage (19 checks).
+- `84c8279` — admitted-operation persistence, delayed response recovery, UNKNOWN
+  guards and review regressions.
+
+Branch remains `dev/dashboard-functional-audit`; no push, merge or deployment.
+Unrelated acceptance documents, wrapper tooling and existing evidence are excluded.
+
+### Current finalization gates
+
+| Command | Coordinator result |
+|---|---|
+| `python -m pytest -q` | 542 passed, 11 skipped, 3 dependency warnings |
+| `cd frontend; npm test` | 226 passed, 32 files, after final review repair |
+| `cd frontend; npm run build` | PASS, TypeScript + Vite, 70 modules |
+| `cd frontend; npx tsc --noEmit` | PASS |
+| `python -m ruff check backend/app/api/provisioning.py backend/app/provisioning/worker.py backend/tests/test_provisioning_history.py frontend/scripts/finalization-browser.py` | PASS, no ignored B008 |
+| `python -m black --check` on those four Python files | PASS |
+| `python -m mypy --strict --follow-imports=silent backend/app/api/provisioning.py backend/app/provisioning/worker.py` | PASS, 2 files |
+| Same strict mypy without `--follow-imports=silent` | NOT CLEAN: 24 errors in 6 imported modules; no repository-wide typing claim |
+| `git diff --check` | PASS, line-ending conversion warnings only |
+
+No frontend ESLint/format script is configured in `frontend/package.json`; no
+frontend lint-clean claim is made. TypeScript/build and tests are distinct gates.
+
+Latest coordinator browser rerun: **19 passed, 0 failed**, artifacts at
+`C:\Users\user\AppData\Local\Temp\opencode\nimbusops-real-browser-z65m58gt\`.
+The additional **SAFE ISOLATED** check imports the actual Vite-served ConfirmDialog
+and React into a dedicated page: submission changes local busy state only,
+disabled-button focus is retained inside the modal, Tab/Shift+Tab remain contained,
+busy Escape is ignored and closing restores the trigger. It performs zero API
+requests and is not presented as an operational confirmation test. The 18 real
+route/backend journeys also pass; owned processes/storage are cleaned up.
+
+### Remaining boundaries and exact next action
+
+- Admission recovery regressions use mocked requests, not live operational POSTs;
+  no container, installer, SSH target or worker execution was authorized.
+- Persistence is same-tab only. A full reload before the admission ID arrives
+  leaves a fail-closed pending reference requiring reconciliation. Storage-write
+  failure cannot guarantee recovery after a full reload; an explicit warning is shown.
+- Deferred minors: concurrent insertions can duplicate offset-paged history rows;
+  browser viewer assertion checks no matching 403s rather than all token requests
+  (unit tests assert no request); harness mutation audit is not a comprehensive
+  operational-endpoint allowlist. Inspected journeys avoid those writes.
+- Browser faults cover explicit offline mode, not backend crash; session invalidation
+  uses revocation, not elapsed TTL. Real assistive-technology audit is unperformed.
+- Exact next safe action: run `python frontend/scripts/finalization-browser.py` for
+  the bounded presentation. Real Automatic Setup acceptance needs a separate scope
+  and authorization; do not retry/rearm the preserved historical job or reuse spent
+  acceptance evidence/approval markers.
+
+Execution ruling: resume existing delegated sessions rather than restart inline,
+as explicitly requested after quota refresh. Cost: duplicated context overhead,
+mitigated with exclusive ownership and coordinator combined gates. No new schema,
+infrastructure, push, merge, deployment, sudo or historical-state mutation occurred.
+
+## Baseline verdict: PARTIALLY READY
 
 The dashboard can honestly demonstrate navigation, authentication UI, empty
 fleet/application/history states and configured API-driven views. It is **not**
