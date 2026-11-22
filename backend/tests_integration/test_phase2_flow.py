@@ -218,9 +218,14 @@ def test_full_deploy_flow_real_agent_real_backend(server, identity):
     # 4. Managed application inventory reflects the result.
     status, apps = http_get("/api/v1/applications")
     assert status == 200
-    assert apps["count"] == 1
-    app = apps["applications"][0]
-    assert app["deployment_id"] == dep_id
+    # The full suite shares one disposable DB; select this flow's deployment
+    # instead of assuming the inventory is globally empty.
+    assert apps["count"] == len(apps["applications"])
+    app = next(
+        (item for item in apps["applications"] if item["deployment_id"] == dep_id),
+        None,
+    )
+    assert app is not None
     assert app["container_state"] == "RUNNING"
     assert app["http_ok"] is True
     assert app["app_url"] == "http://localhost:18080/"

@@ -206,16 +206,25 @@ def job_status(
 
 def safe_event_detail(event: ProvisioningEvent) -> dict[str, int]:
     """Explicit allowlist: never expose arbitrary provider text or stored JSON."""
-    if event.code != "INSTALL_TRANSPORT_FAILED":
+    if event.code not in {
+        "INSTALL_COMPLETED", "INSTALL_TIMED_OUT", "INSTALL_CANCELLED",
+        "INSTALL_TRANSPORT_FAILED",
+    }:
         return {}
     try:
         detail = json.loads(event.safe_detail_json or "{}")
     except (ValueError, TypeError):
         return {}
-    status = detail.get("transport_exit_status") if isinstance(detail, dict) else None
-    if type(status) is int and -255 <= status <= 255:
-        return {"transport_exit_status": status}
-    return {}
+    if not isinstance(detail, dict):
+        return {}
+    result = {}
+    for key in ("installer_exit_status", "transport_exit_status"):
+        status = detail.get(key)
+        # Negative transport statuses exist in legacy failure events only.
+        minimum = -255 if key == "transport_exit_status" and event.code == "INSTALL_TRANSPORT_FAILED" else 0
+        if type(status) is int and minimum <= status <= 255:
+            result[key] = status
+    return result
 
 
 @router.post("/jobs/{job_id}/retry")

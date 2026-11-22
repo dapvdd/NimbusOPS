@@ -7,6 +7,37 @@ import SetupHistory from './SetupHistory';
 interface ConfirmationIntent { key: string; plan: SetupPlan }
 const intentStorage = 'nimbusops.setup.confirm.v1';
 
+const installMessages = new Map<string, string>([
+  ['INSTALL_PHASE_LOCK_ACQUIRED', 'Installer lock acquired. This phase is not proof of enrollment.'],
+  ['INSTALL_PHASE_IDENTITY_ABSENT', 'No existing identity observed at the installer check. This is not proof of enrollment.'],
+  ['INSTALL_PHASE_ARCHIVE_DOWNLOADED', 'Agent archive downloaded; integrity verification is still required.'],
+  ['INSTALL_PHASE_ARCHIVE_VERIFIED', 'Archive integrity verified. This is not proof of installation or enrollment.'],
+  ['INSTALL_PHASE_ARCHIVE_EXTRACTED', 'Agent archive extracted. The installer has not yet been observed starting.'],
+  ['INSTALL_PHASE_ADAPTER_READY', 'Installer adapter ready. This is not proof of installation or enrollment.'],
+  ['INSTALL_PHASE_INSTALLER_STARTED', 'Installer started. Completion and enrollment are not yet verified.'],
+  ['INSTALL_COMPLETED', 'Installation observation completed; this is not verified success. Enrollment, fresh heartbeat and telemetry must be verified separately.'],
+  ['INSTALL_TIMED_OUT', 'Installation observation timed out. The remote installer may still be running; timeout is not proof of rollback. Operator reconciliation is required.'],
+  ['INSTALL_CANCELLED', 'Installation observation cancelled. This does not prove the remote installer stopped or rolled back. Operator reconciliation is required.'],
+  ['INSTALL_TRANSPORT_FAILED', 'Installation transport failed. The remote outcome is uncertain; operator reconciliation is required.'],
+]);
+const installOutcomes = new Set(['INSTALL_COMPLETED', 'INSTALL_TIMED_OUT', 'INSTALL_CANCELLED', 'INSTALL_TRANSPORT_FAILED']);
+
+function boundedExitStatus(value: unknown, minimum = 0): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= minimum && value <= 255;
+}
+
+function InstallDiagnostic({event}: {event: SetupJob['events'][number]}) {
+  const message = installMessages.get(event.code);
+  const outcome = installOutcomes.has(event.code);
+  const installer = event.safe_detail?.installer_exit_status;
+  const transport = event.safe_detail?.transport_exit_status;
+  return <>
+    {message ? <p>{message}</p> : null}
+    {outcome && boundedExitStatus(installer) ? <p>Installer exit status: {installer}. This is not proof of enrollment, fresh heartbeat or telemetry; zero exit alone is not verified success.</p> : null}
+    {outcome && boundedExitStatus(transport, event.code === 'INSTALL_TRANSPORT_FAILED' ? -255 : 0) ? <p>Transport exit status: {transport}. This is not proof of installer completion or rollback; reconcile uncertain outcomes before retrying.</p> : null}
+  </>;
+}
+
 export default function AutomaticSetup() {
   const [targets, setTargets] = useState<{id: string; hostname: string; address: string}[]>([]);
   const [selected, setSelected] = useState('');
@@ -137,7 +168,7 @@ export default function AutomaticSetup() {
     {jobId && <div aria-live="polite"><p>Job: {jobId}</p><p>Status: {job?.state ?? 'Loading — outcome not yet verified'}</p>
       {job && <><p>Step: {job.step}</p>{job.reason_code && <p>Reason: {job.reason_code}</p>}</>}
       <ul>{job?.events.map(e => <li key={e.sequence}>{e.code}
-        {e.code === 'INSTALL_TRANSPORT_FAILED' && Number.isInteger(e.safe_detail?.transport_exit_status) && <p>Transport exit status: {e.safe_detail?.transport_exit_status}. This is not proof of installer completion or rollback; operator reconciliation is required.</p>}
+        <InstallDiagnostic event={e} />
       </li>)}</ul>
       {job?.state === 'SUCCEEDED' ? <p>Enrollment, fresh heartbeat and telemetry verified.</p> : <p>Service startup alone is not proof of success.</p>}
       {job?.reconciliation_required && <p>Do not reinstall or reenroll. An uncertain outcome requires operator reconciliation; blind retry is blocked.</p>}

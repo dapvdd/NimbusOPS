@@ -6,7 +6,7 @@ export interface SetupPlan {
 export interface SetupJob {
   id: string; state: string; step: string; reason_code: string | null;
   reconciliation_required: boolean; retry_allowed: boolean;
-   events: { sequence: number; code: string; at: number; safe_detail?: {transport_exit_status?: number} }[];
+  events: { sequence: number; code: string; at: number; safe_detail?: {installer_exit_status?: number; transport_exit_status?: number} }[];
 }
 export interface SetupJobSummary {
   id: string; target_id: string; method: string; operation: string;

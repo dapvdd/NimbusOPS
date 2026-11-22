@@ -145,6 +145,29 @@ def telemetry(
 ) -> TelemetryResponse:
     token = _agent_token(authorization)
     host = host_service.authenticate_host(db, x_host_id, token)
+    # Client time orders metrics, but must not pin "latest" arbitrarily far
+    # ahead. Permit five minutes of clock skew and delayed/retried samples;
+    # connectivity remains based on server receipt time in record_telemetry.
+    from datetime import timedelta
+
+    from fastapi.exceptions import RequestValidationError
+
+    recorded_at = req.recorded_at
+    if recorded_at.tzinfo is None:
+        recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+    else:
+        recorded_at = recorded_at.astimezone(timezone.utc)
+    if recorded_at > datetime.now(timezone.utc) + timedelta(minutes=5):
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("body", "recorded_at"),
+                    "msg": "recorded_at must not be more than five minutes in the future",
+                }
+            ]
+        )
+    req = req.model_copy(update={"recorded_at": recorded_at})
     row, retained = host_service.record_telemetry(db, host, req)
     stale_s, offline_s = host_service.require_status_context(host_service)
     return TelemetryResponse(

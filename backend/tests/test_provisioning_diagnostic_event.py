@@ -3,7 +3,6 @@
 import json
 
 import pytest
-
 from sqlalchemy import select
 
 from backend.app.models import Operator
@@ -49,6 +48,45 @@ def test_other_event_codes_cannot_expose_transport_details():
         )
         == {}
     )
+
+
+@pytest.mark.parametrize("code", [
+    "INSTALL_COMPLETED", "INSTALL_TIMED_OUT", "INSTALL_CANCELLED",
+    "INSTALL_TRANSPORT_FAILED",
+])
+def test_terminal_diagnostics_expose_only_bounded_exit_facts(code):
+    from backend.app.api.provisioning import safe_event_detail
+
+    assert safe_event_detail(ProvisioningEvent(code=code, safe_detail_json=json.dumps({
+        "installer_exit_status": 0, "transport_exit_status": 255,
+        "stdout": "never-expose", "phase": "untrusted",
+    }))) == {"installer_exit_status": 0, "transport_exit_status": 255}
+
+
+@pytest.mark.parametrize("status", [True, False, "0", 1.5, -1, 256, None])
+def test_installer_status_rejects_non_protocol_values(status):
+    from backend.app.api.provisioning import safe_event_detail
+
+    assert safe_event_detail(ProvisioningEvent(
+        code="INSTALL_COMPLETED", safe_detail_json=json.dumps({
+            "installer_exit_status": status, "transport_exit_status": 0,
+        }),
+    )) == {"transport_exit_status": 0}
+
+
+@pytest.mark.parametrize("code", ["OTHER", "INSTALL_PHASE_INSTALLER_STARTED", "INSTALL_PHASE_SECRET", "INSTALL_COMPLETED_EXTRA"])
+def test_non_outcome_events_do_not_expose_exit_details(code):
+    from backend.app.api.provisioning import safe_event_detail
+
+    assert safe_event_detail(ProvisioningEvent(code=code, safe_detail_json=
+        '{"installer_exit_status":0,"transport_exit_status":0}')) == {}
+
+
+def test_legacy_negative_transport_status_is_preserved():
+    from backend.app.api.provisioning import safe_event_detail
+
+    assert safe_event_detail(ProvisioningEvent(code="INSTALL_TRANSPORT_FAILED",
+        safe_detail_json='{"transport_exit_status":-255}')) == {"transport_exit_status": -255}
 
 
 def test_numeric_exit_is_recorded_without_changing_reconciliation(

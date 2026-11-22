@@ -65,6 +65,46 @@ it('renders only allowlisted numeric transport diagnostics with uncertainty warn
   expect(await screen.findByText(/Transport exit status: 73/)).toHaveTextContent(/not proof.*rollback/i);
 });
 
+it('explains allowlisted phases and outcomes without treating zero exits as enrollment', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  sessionStorage.setItem('nimbusops.setup.job.v1', 'diagnostic');
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: []});
+  vi.spyOn(provisioning, 'job').mockResolvedValue({id: 'diagnostic', state: 'VERIFYING', step: 'INSTALL_ADMITTED', reason_code: 'RECONCILIATION_REQUIRED', reconciliation_required: true, retry_allowed: false,
+    events: [
+      {sequence: 1, code: 'INSTALL_PHASE_ARCHIVE_VERIFIED', at: 0},
+      {sequence: 2, code: 'INSTALL_COMPLETED', at: 0, safe_detail: {installer_exit_status: 0, transport_exit_status: 0}},
+      {sequence: 3, code: 'INSTALL_TIMED_OUT', at: 0},
+      {sequence: 4, code: 'INSTALL_CANCELLED', at: 0},
+    ]});
+  render(<AutomaticSetup />);
+  expect(await screen.findByText(/Archive integrity verified/i)).toBeInTheDocument();
+  expect(screen.getByText(/Installer exit status: 0/)).toHaveTextContent(/not proof.*enrollment/i);
+  expect(screen.getByText(/Transport exit status: 0/)).toHaveTextContent(/not proof.*rollback/i);
+  expect(screen.getByText(/Installation observation completed/i)).toHaveTextContent(/not.*verified success/i);
+  expect(screen.getByText(/Installation observation timed out/i)).toHaveTextContent(/may still be running/i);
+  expect(screen.getByText(/Installation observation cancelled/i)).toHaveTextContent(/not.*remote.*stopped/i);
+  expect(screen.queryByText(/Enrollment, fresh heartbeat and telemetry verified/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', {name: /retry|add another/i})).not.toBeInTheDocument();
+});
+
+it('rejects malformed numeric details and diagnostics on unknown event codes', async () => {
+  const { provisioning } = await import('../../api/provisioning');
+  sessionStorage.setItem('nimbusops.setup.job.v1', 'diagnostic');
+  vi.spyOn(provisioning, 'targets').mockResolvedValue({targets: []});
+  const events = [
+    {sequence: 1, code: 'INSTALL_COMPLETED', at: 0, safe_detail: {installer_exit_status: true, transport_exit_status: 256}},
+    {sequence: 2, code: 'INSTALL_CANCELLED', at: 0, safe_detail: {installer_exit_status: -1, transport_exit_status: '0'}},
+    {sequence: 3, code: 'OTHER', at: 0, safe_detail: {installer_exit_status: 0, transport_exit_status: 0}},
+    {sequence: 4, code: 'INSTALL_PHASE_SECRET', at: 0, safe_detail: {installer_exit_status: 0}},
+    {sequence: 5, code: 'INSTALL_TRANSPORT_FAILED', at: 0, safe_detail: {transport_exit_status: 999}},
+  ];
+  vi.spyOn(provisioning, 'job').mockResolvedValue({id: 'diagnostic', state: 'VERIFYING', step: 'INSTALL_ADMITTED', reason_code: null, reconciliation_required: true, retry_allowed: false,
+    events: events as unknown as import('../../api/provisioning').SetupJob['events']});
+  render(<AutomaticSetup />);
+  await screen.findByText('Step: INSTALL_ADMITTED');
+  expect(screen.queryByText(/exit status:/i)).not.toBeInTheDocument();
+});
+
 it('allows fresh preflight after definitive rejection of a never-dispatched intent', async () => {
   const { provisioning } = await import('../../api/provisioning');
   const { ApiFailure } = await import('../../api/client');
